@@ -1,0 +1,110 @@
+<template>
+  <div class="max-w-lg mx-auto">
+    <button @click="router.push('/')" class="flex items-center gap-1 text-sky-600 hover:text-sky-800 mb-6 text-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+      返回选班
+    </button>
+
+    <h1 class="text-2xl font-bold text-sky-900 mb-6">📝 填写学员信息</h1>
+
+    <div v-if="sessionInfo" class="bg-sky-50 rounded-xl p-4 mb-6 text-sm text-sky-800">
+      <div class="font-bold mb-1">{{ sessionInfo.title }}</div>
+      <div>教练：{{ sessionInfo.coach }} · {{ formatTime(sessionInfo.start_time) }}</div>
+      <div class="mt-1 text-orange-600 font-bold">¥{{ (sessionInfo.price / 100).toFixed(2) }}</div>
+    </div>
+
+    <form @submit.prevent="submitOrder" class="bg-white rounded-2xl shadow-sm border border-sky-100 p-6 space-y-5">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">学员姓名</label>
+        <input v-model="form.student_name" required maxlength="100"
+          class="w-full border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-sky-300 focus:border-sky-300 outline-none transition" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">学员年龄</label>
+        <input v-model.number="form.student_age" type="number" required min="1" max="18"
+          class="w-full border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-sky-300 focus:border-sky-300 outline-none transition" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">家长姓名</label>
+        <input v-model="form.parent_name" required maxlength="100"
+          class="w-full border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-sky-300 focus:border-sky-300 outline-none transition" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">家长电话</label>
+        <input v-model="form.parent_phone" required maxlength="20" type="tel"
+          class="w-full border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-sky-300 focus:border-sky-300 outline-none transition" />
+      </div>
+
+      <div v-if="submitError" class="bg-red-50 text-red-700 rounded-xl p-3 text-sm">{{ submitError }}</div>
+
+      <button type="submit" :disabled="submitting"
+        class="w-full py-3 rounded-xl font-medium text-white bg-sky-500 hover:bg-sky-600 disabled:bg-gray-300 transition">
+        {{ submitting ? '提交中...' : '确认报名' }}
+      </button>
+
+      <p class="text-xs text-gray-400 text-center">下单后 15 分钟内未支付将自动释放名额</p>
+    </form>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, reactive } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { useApi } from '@/composables/useApi'
+
+const router = useRouter()
+const route = useRoute()
+const { get, post } = useApi()
+
+const sessionId = route.query.sessionId as string
+
+interface SessionInfo {
+  title: string
+  coach: string
+  price: number
+  start_time: string
+}
+
+const sessionInfo = ref<SessionInfo | null>(null)
+const submitting = ref(false)
+const submitError = ref<string | null>(null)
+
+const form = reactive({
+  student_name: '',
+  student_age: 3,
+  parent_name: '',
+  parent_phone: '',
+})
+
+function formatTime(iso: string) {
+  return new Date(iso).toLocaleString('zh-CN', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+onMounted(async () => {
+  if (!sessionId) {
+    router.push('/')
+    return
+  }
+  try {
+    sessionInfo.value = await get<SessionInfo>(`/sessions/${sessionId}`)
+  } catch {
+    router.push('/')
+  }
+})
+
+async function submitOrder() {
+  submitting.value = true
+  submitError.value = null
+  try {
+    const order = await post<{ id: string }>('/orders', {
+      session_id: sessionId,
+      ...form,
+    })
+    router.push({ name: 'payment', query: { orderId: order.id } })
+  } catch (e: any) {
+    submitError.value = e.message || '报名失败，请重试'
+  } finally {
+    submitting.value = false
+  }
+}
+</script>

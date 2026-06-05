@@ -1,0 +1,55 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: swim_registration
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5440:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6390:6379"
+
+  api:
+    build: ./api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/swim_registration
+      REDIS_URL: redis://redis:6379/0
+      ORDER_EXPIRE_MINUTES: 15
+      ADMIN_SECRET: changeme
+      CORS_ORIGINS: '["http://localhost","http://localhost:3000"]'
+    ports:
+      - "8100:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: >
+      sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    image: nginx:alpine
+    ports:
+      - "3100:80"
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
