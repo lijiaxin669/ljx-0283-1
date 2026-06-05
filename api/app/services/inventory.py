@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Session, Order, Payment
+from app.services.coupon import redeem_coupon, release_coupon
 
 
 async def lock_and_decrease_inventory(db: AsyncSession, session_id: uuid.UUID) -> Session | None:
@@ -33,10 +34,42 @@ async def restore_inventory(db: AsyncSession, session_id: uuid.UUID, count: int 
     await db.flush()
 
 
-async def create_order(db: AsyncSession, session_id: uuid.UUID, student_name: str, student_age: int, parent_name: str, parent_phone: str) -> Order | None:
+class OrderError(Exception):
+    """下单业务异常，携带面向用户的提示信息。"""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+async def create_order(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    student_name: str,
+    student_age: int,
+    parent_name: str,
+    parent_phone: str,
+    coupon_code: str | None = None,
+) -> Order | None:
     session = await lock_and_decrease_inventory(db, session_id)
     if session is None:
         return None
+
+    original_amount = session.price
+    discount_amount = 0
+    coupon_id = None
+    applied_code = None
+
+    if coupon_code:
+        coupon, discount, message = await redeem_coupon(db, coupon_code, original_amount)
+        if coupon is None:
+            # 优惠券不可用：回滚刚扣减的库存并抛出业务异常
+            await restore_inventory(db, session_id)
+            raise OrderError(message)
+        discount_amount = discount
+        coupon_id = coupon.id
+        applied_code = coupon.code
+
     expire_at = datetime.utcnow() + timedelta(minutes=settings.ORDER_EXPIRE_MINUTES)
     order = Order(
         session_id=session_id,
@@ -45,7 +78,11 @@ async def create_order(db: AsyncSession, session_id: uuid.UUID, student_name: st
         parent_name=parent_name,
         parent_phone=parent_phone,
         status="pending",
-        amount=session.price,
+        amount=original_amount - discount_amount,
+        original_amount=original_amount,
+        discount_amount=discount_amount,
+        coupon_id=coupon_id,
+        coupon_code=applied_code,
         expire_at=expire_at,
     )
     db.add(order)
@@ -63,6 +100,7 @@ async def release_expired_orders(db: AsyncSession) -> int:
     for order in expired_orders:
         order.status = "expired"
         await restore_inventory(db, order.session_id)
+        await release_coupon(db, order.coupon_id)
         count += 1
     await db.flush()
     return count
@@ -82,6 +120,7 @@ async def confirm_payment(db: AsyncSession, payment_id: str, order_id: uuid.UUID
     if datetime.utcnow() > order.expire_at:
         order.status = "expired"
         await restore_inventory(db, order.session_id)
+        await release_coupon(db, order.coupon_id)
         await db.flush()
         return None
 

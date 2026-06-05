@@ -35,6 +35,35 @@
           class="w-full border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-sky-300 focus:border-sky-300 outline-none transition" />
       </div>
 
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">优惠券（选填）</label>
+        <div class="flex gap-2">
+          <input v-model="couponCode" maxlength="50" placeholder="输入优惠码，如 SWIM50"
+            @input="resetCoupon"
+            class="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 uppercase focus:ring-2 focus:ring-sky-300 focus:border-sky-300 outline-none transition" />
+          <button type="button" @click="applyCoupon" :disabled="!couponCode || validatingCoupon"
+            class="px-4 rounded-xl bg-sky-100 text-sky-700 hover:bg-sky-200 disabled:opacity-50 transition text-sm font-medium whitespace-nowrap">
+            {{ validatingCoupon ? '校验中' : '使用' }}
+          </button>
+        </div>
+        <p v-if="couponMsg" :class="couponValid ? 'text-green-600' : 'text-red-500'" class="text-xs mt-1.5">{{ couponMsg }}</p>
+      </div>
+
+      <div v-if="sessionInfo" class="bg-gray-50 rounded-xl p-4 text-sm space-y-1.5">
+        <div class="flex justify-between text-gray-600">
+          <span>课程原价</span>
+          <span>¥{{ (sessionInfo.price / 100).toFixed(2) }}</span>
+        </div>
+        <div v-if="couponValid && discountAmount > 0" class="flex justify-between text-green-600">
+          <span>优惠券抵扣</span>
+          <span>- ¥{{ (discountAmount / 100).toFixed(2) }}</span>
+        </div>
+        <div class="flex justify-between font-bold text-gray-900 pt-1.5 border-t border-gray-200">
+          <span>应付金额</span>
+          <span class="text-orange-500 text-lg">¥{{ (finalAmount / 100).toFixed(2) }}</span>
+        </div>
+      </div>
+
       <div v-if="submitError" class="bg-red-50 text-red-700 rounded-xl p-3 text-sm">{{ submitError }}</div>
 
       <button type="submit" :disabled="submitting"
@@ -48,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive } from 'vue'
+import { ref, onMounted, reactive, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useApi } from '@/composables/useApi'
 
@@ -65,9 +94,25 @@ interface SessionInfo {
   start_time: string
 }
 
+interface CouponValidateResult {
+  valid: boolean
+  code: string
+  name?: string
+  original_amount: number
+  discount_amount: number
+  final_amount: number
+  message: string
+}
+
 const sessionInfo = ref<SessionInfo | null>(null)
 const submitting = ref(false)
 const submitError = ref<string | null>(null)
+
+const couponCode = ref('')
+const couponValid = ref(false)
+const couponMsg = ref('')
+const validatingCoupon = ref(false)
+const discountAmount = ref(0)
 
 const form = reactive({
   student_name: '',
@@ -76,8 +121,38 @@ const form = reactive({
   parent_phone: '',
 })
 
+const finalAmount = computed(() => {
+  const price = sessionInfo.value?.price || 0
+  return couponValid.value ? Math.max(0, price - discountAmount.value) : price
+})
+
 function formatTime(iso: string) {
   return new Date(iso).toLocaleString('zh-CN', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function resetCoupon() {
+  couponValid.value = false
+  couponMsg.value = ''
+  discountAmount.value = 0
+}
+
+async function applyCoupon() {
+  const code = couponCode.value.trim().toUpperCase()
+  couponCode.value = code
+  if (!code) return
+  validatingCoupon.value = true
+  try {
+    const res = await post<CouponValidateResult>('/coupons/validate', { code, session_id: sessionId })
+    couponValid.value = res.valid
+    couponMsg.value = res.valid ? `${res.name}：${res.message}` : res.message
+    discountAmount.value = res.discount_amount
+  } catch (e: any) {
+    couponValid.value = false
+    couponMsg.value = e.message || '优惠券校验失败'
+    discountAmount.value = 0
+  } finally {
+    validatingCoupon.value = false
+  }
 }
 
 onMounted(async () => {
@@ -99,6 +174,7 @@ async function submitOrder() {
     const order = await post<{ id: string }>('/orders', {
       session_id: sessionId,
       ...form,
+      coupon_code: couponValid.value ? couponCode.value : null,
     })
     router.push({ name: 'payment', query: { orderId: order.id } })
   } catch (e: any) {

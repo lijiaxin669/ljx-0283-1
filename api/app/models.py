@@ -38,12 +38,18 @@ class Order(Base):
     parent_phone: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    original_amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    discount_amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    coupon_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("coupons.id"), nullable=True)
+    coupon_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     expire_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     session: Mapped["Session"] = relationship(back_populates="orders")
     payment: Mapped["Payment | None"] = relationship(back_populates="order", uselist=False)
+    coupon: Mapped["Coupon | None"] = relationship(back_populates="orders")
+    refunds: Mapped[list["Refund"]] = relationship(back_populates="order")
 
     __table_args__ = (
         Index("ix_orders_status_expire", "status", "expire_at"),
@@ -67,4 +73,52 @@ class Payment(Base):
 
     __table_args__ = (
         Index("ix_payments_payment_id", "payment_id", unique=True),
+    )
+
+
+class Coupon(Base):
+    __tablename__ = "coupons"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # discount_type: "fixed" 固定立减(分) | "percent" 百分比立减(off)
+    discount_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    discount_value: Mapped[int] = mapped_column(Integer, nullable=False)
+    min_amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_discount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    used_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    valid_from: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    valid_until: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    orders: Mapped[list["Order"]] = relationship(back_populates="coupon")
+
+    __table_args__ = (
+        Index("ix_coupons_code", "code", unique=True),
+    )
+
+
+class Refund(Base):
+    __tablename__ = "refunds"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
+    payment_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(String(200), nullable=False)
+    # status: requested 待审核 | approved 已通过(退款中) | refunded 已退款 | rejected 已驳回
+    status: Mapped[str] = mapped_column(String(20), default="requested")
+    operator: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    remark: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    order: Mapped["Order"] = relationship(back_populates="refunds")
+
+    __table_args__ = (
+        Index("ix_refunds_order_status", "order_id", "status"),
     )

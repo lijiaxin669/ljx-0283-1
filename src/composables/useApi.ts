@@ -36,15 +36,36 @@ export function useApi() {
     }
   }
 
-  async function post<T>(path: string, body?: any): Promise<T> {
+  async function post<T>(path: string, body?: any, headers?: Record<string, string>): Promise<T> {
     loading.value = true
     error.value = null
     try {
       if (USE_MOCK) {
-        return (await mockApi.post(path, body)) as T
+        return (await mockApi.post(path, body, headers)) as T
       }
       return await realRequest<T>(path, {
         method: 'POST',
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+      })
+    } catch (e: any) {
+      error.value = e.message
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function patch<T>(path: string, body?: any, headers?: Record<string, string>): Promise<T> {
+    loading.value = true
+    error.value = null
+    try {
+      if (USE_MOCK) {
+        return (await mockApi.patch(path, body, headers)) as T
+      }
+      return await realRequest<T>(path, {
+        method: 'PATCH',
+        headers,
         body: body ? JSON.stringify(body) : undefined,
       })
     } catch (e: any) {
@@ -87,5 +108,5 @@ export function useApi() {
     }
   }
 
-  return { loading, error, get, post, download }
+  return { loading, error, get, post, patch, download }
 }

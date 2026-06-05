@@ -35,6 +35,7 @@ class OrderCreate(BaseModel):
     student_age: int = Field(..., ge=1, le=18)
     parent_name: str = Field(..., max_length=100)
     parent_phone: str = Field(..., max_length=20)
+    coupon_code: str | None = Field(None, max_length=50)
 
 
 class OrderOut(BaseModel):
@@ -46,6 +47,9 @@ class OrderOut(BaseModel):
     parent_phone: str
     status: str
     amount: int
+    original_amount: int
+    discount_amount: int
+    coupon_code: str | None
     expire_at: datetime
     created_at: datetime
 
@@ -90,5 +94,94 @@ class VoucherOut(BaseModel):
     start_time: datetime
     end_time: datetime
     amount: int
+    original_amount: int
+    discount_amount: int
+    coupon_code: str | None
     payment_id: str
     paid_at: datetime
+
+
+# ---------------- 优惠券 ----------------
+
+class CouponCreate(BaseModel):
+    code: str = Field(..., max_length=50)
+    name: str = Field(..., max_length=100)
+    discount_type: str = Field(..., pattern="^(fixed|percent)$")
+    discount_value: int = Field(..., gt=0)
+    min_amount: int = Field(0, ge=0)
+    max_discount: int = Field(0, ge=0)
+    total_quantity: int = Field(..., gt=0)
+    valid_from: datetime
+    valid_until: datetime
+
+
+class CouponOut(BaseModel):
+    id: uuid.UUID
+    code: str
+    name: str
+    discount_type: str
+    discount_value: int
+    min_amount: int
+    max_discount: int
+    total_quantity: int
+    used_quantity: int
+    valid_from: datetime
+    valid_until: datetime
+    status: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CouponUpdate(BaseModel):
+    status: str = Field(..., pattern="^(active|disabled)$")
+
+
+class CouponValidateIn(BaseModel):
+    code: str = Field(..., max_length=50)
+    session_id: uuid.UUID
+
+
+class CouponValidateOut(BaseModel):
+    valid: bool
+    code: str
+    name: str | None = None
+    original_amount: int
+    discount_amount: int
+    final_amount: int
+    message: str
+
+
+# ---------------- 退款 ----------------
+
+class RefundCreate(BaseModel):
+    reason: str = Field(..., max_length=200)
+
+
+class RefundReject(BaseModel):
+    remark: str | None = Field(None, max_length=500)
+
+
+class RefundApprove(BaseModel):
+    operator: str | None = Field(None, max_length=100)
+    remark: str | None = Field(None, max_length=500)
+
+
+class RefundOut(BaseModel):
+    id: uuid.UUID
+    order_id: uuid.UUID
+    payment_id: str
+    amount: int
+    reason: str
+    status: str
+    operator: str | None
+    remark: str | None
+    requested_at: datetime
+    processed_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class RefundDetailOut(RefundOut):
+    student_name: str
+    session_title: str

@@ -57,6 +57,9 @@
             <div>
               <div class="text-gray-400 text-xs">支付金额</div>
               <div class="text-2xl font-bold text-orange-500">¥{{ (voucher.amount / 100).toFixed(2) }}</div>
+              <div v-if="voucher.discount_amount > 0" class="text-xs text-green-600 mt-0.5">
+                优惠券 {{ voucher.coupon_code }} 已省 ¥{{ (voucher.discount_amount / 100).toFixed(2) }}
+              </div>
             </div>
             <div class="text-right text-xs text-gray-400">
               <div>支付单号：{{ voucher.payment_id }}</div>
@@ -99,6 +102,9 @@ interface Voucher {
   start_time: string
   end_time: string
   amount: number
+  original_amount: number
+  discount_amount: number
+  coupon_code: string | null
   payment_id: string
   paid_at: string
 }

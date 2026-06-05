@@ -16,9 +16,13 @@
           <span :class="statusClass" class="px-3 py-1 rounded-full text-sm font-medium">{{ statusLabel }}</span>
         </div>
         <div class="text-3xl font-bold text-orange-500 mb-4">¥{{ (order.amount / 100).toFixed(2) }}</div>
+        <div v-if="order.discount_amount > 0" class="text-xs text-gray-400 mb-3 -mt-2">
+          原价 ¥{{ (order.original_amount / 100).toFixed(2) }}
+          <span class="text-green-600">· 优惠券 {{ order.coupon_code }} 已抵扣 ¥{{ (order.discount_amount / 100).toFixed(2) }}</span>
+        </div>
         <div class="text-sm text-gray-500 space-y-1">
           <div>学员：{{ order.student_name }}</div>
-          <div>过期时间：{{ formatTime(order.expire_at) }}</div>
+          <div v-if="order.status === 'pending'">过期时间：{{ formatTime(order.expire_at) }}</div>
         </div>
 
         <div v-if="order.status === 'pending'" class="mt-4">
@@ -76,9 +80,43 @@
         <div class="text-5xl mb-4">✅</div>
         <p class="text-green-600 font-bold text-xl mb-2">支付成功！</p>
         <p class="text-gray-400 text-sm mb-6">名额已锁定，请准时参加</p>
-        <router-link :to="{ name: 'voucher', query: { orderId: order.id } }"
-          class="inline-block px-6 py-3 rounded-xl bg-sky-500 text-white hover:bg-sky-600 transition font-medium">
-          查看电子凭证
+        <div class="flex flex-col gap-3 max-w-xs mx-auto">
+          <router-link :to="{ name: 'voucher', query: { orderId: order.id } }"
+            class="inline-block px-6 py-3 rounded-xl bg-sky-500 text-white hover:bg-sky-600 transition font-medium">
+            查看电子凭证
+          </router-link>
+          <button @click="showRefund = true"
+            class="px-6 py-2.5 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition text-sm font-medium">
+            申请退款
+          </button>
+        </div>
+      </div>
+
+      <div v-if="showRefund && order.status === 'paid'" class="bg-white rounded-2xl shadow-sm border border-amber-200 p-6">
+        <h3 class="font-bold text-gray-900 mb-3">申请退款</h3>
+        <textarea v-model="refundReason" rows="2" maxlength="200" placeholder="请填写退款原因"
+          class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-amber-300 outline-none mb-3"></textarea>
+        <div class="flex gap-3">
+          <button @click="submitRefund" :disabled="!refundReason.trim() || refunding"
+            class="flex-1 py-2.5 rounded-xl bg-amber-500 text-white hover:bg-amber-600 disabled:bg-gray-300 transition text-sm font-medium">
+            {{ refunding ? '提交中...' : '提交退款申请' }}
+          </button>
+          <button @click="showRefund = false" class="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-500 text-sm">取消</button>
+        </div>
+      </div>
+
+      <div v-if="order.status === 'refunding'" class="text-center bg-white rounded-2xl shadow-sm border border-amber-200 p-8">
+        <div class="text-5xl mb-4">🕓</div>
+        <p class="text-amber-600 font-bold text-xl mb-2">退款审核中</p>
+        <p class="text-gray-500 text-sm">退款申请已提交，请等待管理端审批</p>
+      </div>
+
+      <div v-if="order.status === 'refunded'" class="text-center bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+        <div class="text-5xl mb-4">💸</div>
+        <p class="text-gray-700 font-bold text-xl mb-2">已退款</p>
+        <p class="text-gray-500 text-sm mb-6">退款 ¥{{ (order.amount / 100).toFixed(2) }} 已原路退回，名额已释放</p>
+        <router-link to="/" class="inline-block px-6 py-3 rounded-xl bg-sky-500 text-white hover:bg-sky-600 transition font-medium">
+          重新选班
         </router-link>
       </div>
 
@@ -110,6 +148,9 @@ interface OrderInfo {
   id: string
   status: string
   amount: number
+  original_amount: number
+  discount_amount: number
+  coupon_code: string | null
   student_name: string
   expire_at: string
 }
@@ -121,17 +162,34 @@ const paymentId = ref('')
 const creatingPayment = ref(false)
 const countdown = ref('')
 const countdownMinutes = ref(15)
+const showRefund = ref(false)
+const refundReason = ref('')
+const refunding = ref(false)
 let timer: ReturnType<typeof setInterval> | null = null
 
 const statusLabel = computed(() => {
-  const m: Record<string, string> = { pending: '待支付', paid: '已支付', expired: '已过期', cancelled: '已取消' }
+  const m: Record<string, string> = { pending: '待支付', paid: '已支付', expired: '已过期', cancelled: '已取消', refunding: '退款审核中', refunded: '已退款' }
   return m[order.value?.status || ''] || order.value?.status || ''
 })
 
 const statusClass = computed(() => {
-  const m: Record<string, string> = { pending: 'bg-yellow-100 text-yellow-700', paid: 'bg-green-100 text-green-700', expired: 'bg-red-100 text-red-700' }
+  const m: Record<string, string> = { pending: 'bg-yellow-100 text-yellow-700', paid: 'bg-green-100 text-green-700', expired: 'bg-red-100 text-red-700', refunding: 'bg-amber-100 text-amber-700', refunded: 'bg-gray-100 text-gray-600' }
   return m[order.value?.status || ''] || 'bg-gray-100 text-gray-600'
 })
+
+async function submitRefund() {
+  refunding.value = true
+  try {
+    await post(`/orders/${orderId}/refund`, { reason: refundReason.value.trim() })
+    showRefund.value = false
+    refundReason.value = ''
+    await refreshOrder()
+  } catch (e: any) {
+    alert(e.message || '退款申请失败')
+  } finally {
+    refunding.value = false
+  }
+}
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleString('zh-CN')

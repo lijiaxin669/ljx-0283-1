@@ -24,6 +24,10 @@ interface MockOrder {
   parent_phone: string
   status: string
   amount: number
+  original_amount: number
+  discount_amount: number
+  coupon_id: string | null
+  coupon_code: string | null
   expire_at: string
   created_at: string
 }
@@ -37,6 +41,37 @@ interface MockPayment {
   status: string
   paid_at: string | null
   created_at: string
+}
+
+interface MockCoupon {
+  id: string
+  code: string
+  name: string
+  discount_type: string
+  discount_value: number
+  min_amount: number
+  max_discount: number
+  total_quantity: number
+  used_quantity: number
+  valid_from: string
+  valid_until: string
+  status: string
+  created_at: string
+}
+
+interface MockRefund {
+  id: string
+  order_id: string
+  payment_id: string
+  amount: number
+  reason: string
+  status: string
+  operator: string | null
+  remark: string | null
+  requested_at: string
+  processed_at: string | null
+  student_name: string
+  session_title: string
 }
 
 const ADMIN_SECRET = 'changeme'
@@ -92,8 +127,89 @@ const sessions: MockSession[] = [
   },
 ]
 
+const coupons: MockCoupon[] = [
+  {
+    id: 'c0000000-0000-0000-0000-000000000001',
+    code: 'SWIM50',
+    name: '新生立减 50 元',
+    discount_type: 'fixed',
+    discount_value: 5000,
+    min_amount: 0,
+    max_discount: 0,
+    total_quantity: 100,
+    used_quantity: 0,
+    valid_from: '2026-06-01T00:00:00',
+    valid_until: '2026-12-31T23:59:59',
+    status: 'active',
+    created_at: '2026-06-01T00:00:00',
+  },
+  {
+    id: 'c0000000-0000-0000-0000-000000000002',
+    code: 'SUMMER20',
+    name: '暑期 8 折券',
+    discount_type: 'percent',
+    discount_value: 20,
+    min_amount: 20000,
+    max_discount: 8000,
+    total_quantity: 50,
+    used_quantity: 0,
+    valid_from: '2026-06-01T00:00:00',
+    valid_until: '2026-09-30T23:59:59',
+    status: 'active',
+    created_at: '2026-06-01T00:00:00',
+  },
+  {
+    id: 'c0000000-0000-0000-0000-000000000003',
+    code: 'FULL100',
+    name: '满 200 减 100',
+    discount_type: 'fixed',
+    discount_value: 10000,
+    min_amount: 20000,
+    max_discount: 0,
+    total_quantity: 30,
+    used_quantity: 0,
+    valid_from: '2026-06-01T00:00:00',
+    valid_until: '2026-12-31T23:59:59',
+    status: 'active',
+    created_at: '2026-06-01T00:00:00',
+  },
+]
+
 const orders: MockOrder[] = []
 const payments: MockPayment[] = []
+const refunds: MockRefund[] = []
+
+function computeDiscount(coupon: MockCoupon, amount: number): number {
+  if (amount < coupon.min_amount) return 0
+  let discount = 0
+  if (coupon.discount_type === 'fixed') {
+    discount = Math.min(coupon.discount_value, amount)
+  } else if (coupon.discount_type === 'percent') {
+    discount = Math.floor((amount * coupon.discount_value) / 100)
+    if (coupon.max_discount > 0) discount = Math.min(discount, coupon.max_discount)
+  }
+  return Math.max(0, Math.min(discount, amount))
+}
+
+function checkUsable(coupon: MockCoupon | undefined, amount: number): { usable: boolean; message: string } {
+  const now = Date.now()
+  if (!coupon) return { usable: false, message: '优惠券不存在' }
+  if (coupon.status !== 'active') return { usable: false, message: '优惠券已停用' }
+  if (now < new Date(coupon.valid_from).getTime()) return { usable: false, message: '优惠券尚未生效' }
+  if (now > new Date(coupon.valid_until).getTime()) return { usable: false, message: '优惠券已过期' }
+  if (coupon.used_quantity >= coupon.total_quantity) return { usable: false, message: '优惠券已被领完' }
+  if (amount < coupon.min_amount) {
+    return { usable: false, message: `订单金额需满 ¥${(coupon.min_amount / 100).toFixed(2)} 方可使用` }
+  }
+  if (computeDiscount(coupon, amount) <= 0) return { usable: false, message: '该优惠券对此订单无优惠' }
+  return { usable: true, message: '可用' }
+}
+
+function releaseCoupon(couponId: string | null) {
+  if (!couponId) return
+  const coupon = coupons.find(c => c.id === couponId)
+  if (coupon && coupon.used_quantity > 0) coupon.used_quantity--
+}
 
 function checkExpiry() {
   const now = Date.now()
@@ -105,6 +221,7 @@ function checkExpiry() {
         session.available_slots++
         if (session.status === 'full') session.status = 'open'
       }
+      releaseCoupon(order.coupon_id)
     }
   }
 }
@@ -138,8 +255,27 @@ export const mockApi = {
         paid_orders: orders.filter(o => o.status === 'paid').length,
         pending_orders: orders.filter(o => o.status === 'pending').length,
         expired_orders: orders.filter(o => o.status === 'expired').length,
+        refunded_orders: orders.filter(o => o.status === 'refunded').length,
+        refunding_orders: orders.filter(o => o.status === 'refunding').length,
         total_revenue: orders.filter(o => o.status === 'paid').reduce((sum, o) => sum + o.amount, 0),
+        refunded_amount: orders.filter(o => o.status === 'refunded').reduce((sum, o) => sum + o.amount, 0),
+        total_discount: orders.filter(o => o.status === 'paid' || o.status === 'refunded').reduce((sum, o) => sum + o.discount_amount, 0),
+        pending_refunds: refunds.filter(r => r.status === 'requested').length,
       }
+    }
+
+    if (path === '/admin/coupons') {
+      verifyAdmin(headers)
+      return coupons.map(c => ({ ...c })).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    }
+
+    if (path.startsWith('/admin/refunds')) {
+      verifyAdmin(headers)
+      const urlObj = new URL(path, 'http://localhost')
+      const status = urlObj.searchParams.get('status')
+      let result = refunds.map(r => ({ ...r }))
+      if (status) result = result.filter(r => r.status === status)
+      return result.sort((a, b) => new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime())
     }
 
     if (path.startsWith('/admin/orders')) {
@@ -169,6 +305,9 @@ export const mockApi = {
         start_time: session.start_time,
         end_time: session.end_time,
         amount: order.amount,
+        original_amount: order.original_amount,
+        discount_amount: order.discount_amount,
+        coupon_code: order.coupon_code,
         payment_id: payment.payment_id,
         paid_at: payment.paid_at,
       }
@@ -191,7 +330,7 @@ export const mockApi = {
     throw new Error(`Not found: GET ${path}`)
   },
 
-  async post(path: string, body?: any): Promise<any> {
+  async post(path: string, body?: any, headers?: Record<string, string>): Promise<any> {
     await delay(120)
     checkExpiry()
 
@@ -218,6 +357,22 @@ export const mockApi = {
       if (session.available_slots <= 0 || session.status !== 'open') {
         throw new Error('库存不足或场次已关闭')
       }
+
+      const originalAmount = session.price
+      let discountAmount = 0
+      let couponId: string | null = null
+      let appliedCode: string | null = null
+
+      if (body.coupon_code) {
+        const coupon = coupons.find(c => c.code === body.coupon_code)
+        const { usable, message } = checkUsable(coupon, originalAmount)
+        if (!usable || !coupon) throw new Error(message)
+        discountAmount = computeDiscount(coupon, originalAmount)
+        coupon.used_quantity++
+        couponId = coupon.id
+        appliedCode = coupon.code
+      }
+
       session.available_slots--
       if (session.available_slots === 0) session.status = 'full'
       const expireAt = new Date(Date.now() + 15 * 60 * 1000)
@@ -229,12 +384,134 @@ export const mockApi = {
         parent_name: body.parent_name,
         parent_phone: body.parent_phone,
         status: 'pending',
-        amount: session.price,
+        amount: originalAmount - discountAmount,
+        original_amount: originalAmount,
+        discount_amount: discountAmount,
+        coupon_id: couponId,
+        coupon_code: appliedCode,
         expire_at: expireAt.toISOString(),
         created_at: new Date().toISOString(),
       }
       orders.push(order)
       return { ...order }
+    }
+
+    if (path === '/coupons/validate') {
+      const session = sessions.find(s => s.id === body.session_id)
+      if (!session) {
+        return { valid: false, code: body.code, original_amount: 0, discount_amount: 0, final_amount: 0, message: '场次不存在' }
+      }
+      const originalAmount = session.price
+      const coupon = coupons.find(c => c.code === body.code)
+      const { usable, message } = checkUsable(coupon, originalAmount)
+      if (!usable || !coupon) {
+        return { valid: false, code: body.code, original_amount: originalAmount, discount_amount: 0, final_amount: originalAmount, message }
+      }
+      const discount = computeDiscount(coupon, originalAmount)
+      return {
+        valid: true,
+        code: coupon.code,
+        name: coupon.name,
+        original_amount: originalAmount,
+        discount_amount: discount,
+        final_amount: originalAmount - discount,
+        message: `已抵扣 ¥${(discount / 100).toFixed(2)}`,
+      }
+    }
+
+    const refundMatch = path.match(/^\/orders\/([a-f0-9-]+)\/refund$/)
+    if (refundMatch) {
+      const order = orders.find(o => o.id === refundMatch[1])
+      if (!order) throw new Error('订单不存在')
+      if (order.status === 'refunding') throw new Error('已存在待处理的退款申请')
+      if (order.status === 'refunded') throw new Error('订单已退款')
+      if (order.status !== 'paid') throw new Error('仅已支付订单可申请退款')
+      const payment = payments.find(p => p.order_id === order.id)
+      if (!payment) throw new Error('支付记录不存在')
+      const session = sessions.find(s => s.id === order.session_id)
+      const refund: MockRefund = {
+        id: genId(),
+        order_id: order.id,
+        payment_id: payment.payment_id,
+        amount: order.amount,
+        reason: body.reason,
+        status: 'requested',
+        operator: null,
+        remark: null,
+        requested_at: new Date().toISOString(),
+        processed_at: null,
+        student_name: order.student_name,
+        session_title: session?.title || '',
+      }
+      order.status = 'refunding'
+      refunds.push(refund)
+      return { ...refund }
+    }
+
+    if (path === '/admin/coupons') {
+      verifyAdmin(headers)
+      if (coupons.some(c => c.code === body.code)) throw new Error('优惠码已存在')
+      if (new Date(body.valid_until).getTime() <= new Date(body.valid_from).getTime()) {
+        throw new Error('失效时间必须晚于生效时间')
+      }
+      const coupon: MockCoupon = {
+        id: genId(),
+        code: body.code,
+        name: body.name,
+        discount_type: body.discount_type,
+        discount_value: body.discount_value,
+        min_amount: body.min_amount || 0,
+        max_discount: body.max_discount || 0,
+        total_quantity: body.total_quantity,
+        used_quantity: 0,
+        valid_from: body.valid_from,
+        valid_until: body.valid_until,
+        status: 'active',
+        created_at: new Date().toISOString(),
+      }
+      coupons.push(coupon)
+      return { ...coupon }
+    }
+
+    const approveMatch = path.match(/^\/admin\/refunds\/([a-f0-9-]+)\/approve$/)
+    if (approveMatch) {
+      verifyAdmin(headers)
+      const refund = refunds.find(r => r.id === approveMatch[1])
+      if (!refund) throw new Error('退款单不存在')
+      if (refund.status === 'refunded') return { ...refund }
+      if (refund.status !== 'requested') throw new Error('退款单状态不可审批')
+      const order = orders.find(o => o.id === refund.order_id)
+      if (order) {
+        order.status = 'refunded'
+        const session = sessions.find(s => s.id === order.session_id)
+        if (session) {
+          session.available_slots++
+          if (session.status === 'full') session.status = 'open'
+        }
+        releaseCoupon(order.coupon_id)
+      }
+      const payment = payments.find(p => p.order_id === refund.order_id)
+      if (payment) payment.status = 'refunded'
+      refund.status = 'refunded'
+      refund.operator = body?.operator || '管理员'
+      refund.remark = body?.remark || null
+      refund.processed_at = new Date().toISOString()
+      return { ...refund }
+    }
+
+    const rejectMatch = path.match(/^\/admin\/refunds\/([a-f0-9-]+)\/reject$/)
+    if (rejectMatch) {
+      verifyAdmin(headers)
+      const refund = refunds.find(r => r.id === rejectMatch[1])
+      if (!refund) throw new Error('退款单不存在')
+      if (refund.status === 'rejected') return { ...refund }
+      if (refund.status !== 'requested') throw new Error('退款单状态不可驳回')
+      const order = orders.find(o => o.id === refund.order_id)
+      if (order && order.status === 'refunding') order.status = 'paid'
+      refund.status = 'rejected'
+      refund.remark = body?.remark || null
+      refund.processed_at = new Date().toISOString()
+      return { ...refund }
     }
 
     if (path === '/payments/create') {
@@ -245,6 +522,7 @@ export const mockApi = {
         order.status = 'expired'
         const session = sessions.find(s => s.id === order.session_id)
         if (session) { session.available_slots++; if (session.status === 'full') session.status = 'open' }
+        releaseCoupon(order.coupon_id)
         throw new Error('订单已过期')
       }
       const paymentId = `PAY-${Date.now()}-${genId().slice(0, 8)}`
@@ -275,6 +553,7 @@ export const mockApi = {
         order.status = 'expired'
         const session = sessions.find(s => s.id === order.session_id)
         if (session) { session.available_slots++; if (session.status === 'full') session.status = 'open' }
+        releaseCoupon(order.coupon_id)
         throw new Error('订单已过期，名额已释放')
       }
 
@@ -299,9 +578,22 @@ export const mockApi = {
     throw new Error(`Not found: POST ${path}`)
   },
 
+  async patch(path: string, body?: any, headers?: Record<string, string>): Promise<any> {
+    await delay(100)
+    const couponMatch = path.match(/^\/admin\/coupons\/([a-f0-9-]+)$/)
+    if (couponMatch) {
+      verifyAdmin(headers)
+      const coupon = coupons.find(c => c.id === couponMatch[1])
+      if (!coupon) throw new Error('优惠券不存在')
+      coupon.status = body.status
+      return { ...coupon }
+    }
+    throw new Error(`Not found: PATCH ${path}`)
+  },
+
   exportCsv(headers?: Record<string, string>): string {
     verifyAdmin(headers)
-    const header = '订单ID,学员姓名,学员年龄,家长姓名,家长电话,场次,教练,开始时间,结束时间,金额(分),订单状态,支付ID,支付时间,创建时间'
+    const header = '订单ID,学员姓名,学员年龄,家长姓名,家长电话,场次,教练,开始时间,结束时间,原价(分),优惠码,优惠金额(分),实付金额(分),订单状态,支付ID,支付时间,创建时间'
     const rows = orders.map(order => {
       const session = sessions.find(s => s.id === order.session_id)
       const payment = payments.find(p => p.order_id === order.id)
@@ -315,6 +607,9 @@ export const mockApi = {
         session?.coach || '',
         session?.start_time || '',
         session?.end_time || '',
+        order.original_amount,
+        order.coupon_code || '',
+        order.discount_amount,
         order.amount,
         order.status,
         payment?.payment_id || '',
@@ -335,6 +630,7 @@ export const mockApi = {
         session.available_slots++
         if (session.status === 'full') session.status = 'open'
       }
+      releaseCoupon(order.coupon_id)
     }
   },
 }

@@ -2,7 +2,7 @@
   <div>
     <div class="mb-8">
       <h1 class="text-3xl font-bold text-sky-900 mb-2">🔧 管理端</h1>
-      <p class="text-sky-600">订单管理、数据统计与导出</p>
+      <p class="text-sky-600">订单管理、优惠券、退款审批与数据统计</p>
     </div>
 
     <div v-if="!authenticated" class="max-w-sm mx-auto">
@@ -21,71 +21,252 @@
     </div>
 
     <div v-else class="space-y-6">
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
         <div v-for="s in statCards" :key="s.label" class="bg-white rounded-xl shadow-sm border border-sky-100 p-4">
           <div class="text-sm text-gray-500">{{ s.label }}</div>
           <div class="text-2xl font-bold" :class="s.color">{{ s.value }}</div>
         </div>
       </div>
 
-      <div class="flex gap-3 items-center">
-        <button @click="exportCsv" :disabled="exporting"
-          class="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-600 transition text-sm font-medium disabled:bg-gray-300">
-          {{ exporting ? '导出中...' : '📥 导出 CSV' }}
-        </button>
-        <select v-model="filterStatus" @change="loadOrders" class="border border-gray-200 rounded-xl px-3 py-2 text-sm">
-          <option value="">全部状态</option>
-          <option value="pending">待支付</option>
-          <option value="paid">已支付</option>
-          <option value="expired">已过期</option>
-        </select>
-        <button @click="loadStats(); loadOrders()" class="px-4 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 transition text-sm">
-          🔄 刷新
+      <div class="flex gap-2 border-b border-gray-200">
+        <button v-for="t in tabs" :key="t.key" @click="switchTab(t.key)"
+          :class="activeTab === t.key ? 'border-sky-500 text-sky-700' : 'border-transparent text-gray-500 hover:text-gray-700'"
+          class="px-4 py-2 -mb-px border-b-2 font-medium text-sm transition flex items-center gap-1">
+          {{ t.label }}
+          <span v-if="t.key === 'refunds' && stats.pending_refunds > 0"
+            class="bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5 leading-none">{{ stats.pending_refunds }}</span>
         </button>
       </div>
 
-      <div class="bg-white rounded-2xl shadow-sm border border-sky-100 overflow-hidden">
-        <table class="w-full text-sm">
-          <thead class="bg-sky-50 text-sky-800">
-            <tr>
-              <th class="px-4 py-3 text-left">学员</th>
-              <th class="px-4 py-3 text-left">家长</th>
-              <th class="px-4 py-3 text-left">电话</th>
-              <th class="px-4 py-3 text-left">金额</th>
-              <th class="px-4 py-3 text-left">状态</th>
-              <th class="px-4 py-3 text-left">创建时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="o in orders" :key="o.id" class="border-t border-gray-50 hover:bg-gray-50">
-              <td class="px-4 py-3">{{ o.student_name }} ({{ o.student_age }}岁)</td>
-              <td class="px-4 py-3">{{ o.parent_name }}</td>
-              <td class="px-4 py-3">{{ o.parent_phone }}</td>
-              <td class="px-4 py-3">¥{{ (o.amount / 100).toFixed(2) }}</td>
-              <td class="px-4 py-3">
-                <span :class="orderStatusClass(o.status)" class="px-2 py-0.5 rounded-full text-xs font-medium">{{ orderStatusLabel(o.status) }}</span>
-              </td>
-              <td class="px-4 py-3 text-gray-400">{{ new Date(o.created_at).toLocaleString('zh-CN') }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <div v-if="orders.length === 0" class="text-center py-8 text-gray-400">暂无订单</div>
+      <!-- 订单 -->
+      <div v-show="activeTab === 'orders'" class="space-y-4">
+        <div class="flex gap-3 items-center flex-wrap">
+          <button @click="exportCsv" :disabled="exporting"
+            class="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-600 transition text-sm font-medium disabled:bg-gray-300">
+            {{ exporting ? '导出中...' : '📥 导出 CSV' }}
+          </button>
+          <select v-model="filterStatus" @change="loadOrders" class="border border-gray-200 rounded-xl px-3 py-2 text-sm">
+            <option value="">全部状态</option>
+            <option value="pending">待支付</option>
+            <option value="paid">已支付</option>
+            <option value="expired">已过期</option>
+            <option value="refunding">退款审核中</option>
+            <option value="refunded">已退款</option>
+          </select>
+          <button @click="loadStats(); loadOrders()" class="px-4 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 transition text-sm">
+            🔄 刷新
+          </button>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-sky-100 overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-sky-50 text-sky-800">
+              <tr>
+                <th class="px-4 py-3 text-left">学员</th>
+                <th class="px-4 py-3 text-left">家长</th>
+                <th class="px-4 py-3 text-left">电话</th>
+                <th class="px-4 py-3 text-left">优惠券</th>
+                <th class="px-4 py-3 text-left">实付</th>
+                <th class="px-4 py-3 text-left">状态</th>
+                <th class="px-4 py-3 text-left">创建时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="o in orders" :key="o.id" class="border-t border-gray-50 hover:bg-gray-50">
+                <td class="px-4 py-3">{{ o.student_name }} ({{ o.student_age }}岁)</td>
+                <td class="px-4 py-3">{{ o.parent_name }}</td>
+                <td class="px-4 py-3">{{ o.parent_phone }}</td>
+                <td class="px-4 py-3">
+                  <span v-if="o.coupon_code" class="text-green-600 text-xs">{{ o.coupon_code }} (-¥{{ (o.discount_amount / 100).toFixed(2) }})</span>
+                  <span v-else class="text-gray-300">—</span>
+                </td>
+                <td class="px-4 py-3 font-medium">¥{{ (o.amount / 100).toFixed(2) }}</td>
+                <td class="px-4 py-3">
+                  <span :class="orderStatusClass(o.status)" class="px-2 py-0.5 rounded-full text-xs font-medium">{{ orderStatusLabel(o.status) }}</span>
+                </td>
+                <td class="px-4 py-3 text-gray-400">{{ new Date(o.created_at).toLocaleString('zh-CN') }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="orders.length === 0" class="text-center py-8 text-gray-400">暂无订单</div>
+        </div>
+      </div>
+
+      <!-- 优惠券 -->
+      <div v-show="activeTab === 'coupons'" class="space-y-4">
+        <div class="flex justify-between items-center">
+          <button @click="showCouponForm = !showCouponForm"
+            class="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-600 transition text-sm font-medium">
+            {{ showCouponForm ? '收起' : '＋ 新建优惠券' }}
+          </button>
+          <button @click="loadCoupons" class="px-4 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 transition text-sm">🔄 刷新</button>
+        </div>
+
+        <div v-if="showCouponForm" class="bg-white rounded-2xl shadow-sm border border-sky-100 p-6">
+          <div class="grid md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">优惠码</label>
+              <input v-model="couponForm.code" placeholder="如 SWIM50" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm uppercase outline-none focus:ring-2 focus:ring-sky-300" />
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">名称</label>
+              <input v-model="couponForm.name" placeholder="如 新生立减券" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">类型</label>
+              <select v-model="couponForm.discount_type" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                <option value="fixed">固定立减（元）</option>
+                <option value="percent">百分比立减（%）</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">{{ couponForm.discount_type === 'fixed' ? '立减金额（元）' : '立减比例（%）' }}</label>
+              <input v-model.number="couponForm.discount_value" type="number" min="1" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">使用门槛（元，0 为无门槛）</label>
+              <input v-model.number="couponForm.min_amount" type="number" min="0" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+            </div>
+            <div v-if="couponForm.discount_type === 'percent'">
+              <label class="block text-xs text-gray-500 mb-1">最高优惠（元，0 为不限）</label>
+              <input v-model.number="couponForm.max_discount" type="number" min="0" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">发放数量</label>
+              <input v-model.number="couponForm.total_quantity" type="number" min="1" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">生效时间</label>
+              <input v-model="couponForm.valid_from" type="datetime-local" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">失效时间</label>
+              <input v-model="couponForm.valid_until" type="datetime-local" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+            </div>
+          </div>
+          <p v-if="couponError" class="text-red-500 text-sm mt-3">{{ couponError }}</p>
+          <button @click="createCoupon" :disabled="creatingCoupon"
+            class="mt-4 px-6 py-2.5 rounded-xl bg-sky-500 text-white hover:bg-sky-600 disabled:bg-gray-300 transition text-sm font-medium">
+            {{ creatingCoupon ? '创建中...' : '创建优惠券' }}
+          </button>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-sky-100 overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-sky-50 text-sky-800">
+              <tr>
+                <th class="px-4 py-3 text-left">优惠码</th>
+                <th class="px-4 py-3 text-left">名称</th>
+                <th class="px-4 py-3 text-left">优惠</th>
+                <th class="px-4 py-3 text-left">门槛</th>
+                <th class="px-4 py-3 text-left">已用/总量</th>
+                <th class="px-4 py-3 text-left">有效期</th>
+                <th class="px-4 py-3 text-left">状态</th>
+                <th class="px-4 py-3 text-left">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="c in coupons" :key="c.id" class="border-t border-gray-50 hover:bg-gray-50">
+                <td class="px-4 py-3 font-mono font-medium">{{ c.code }}</td>
+                <td class="px-4 py-3">{{ c.name }}</td>
+                <td class="px-4 py-3">{{ couponDiscountText(c) }}</td>
+                <td class="px-4 py-3">{{ c.min_amount > 0 ? `满¥${(c.min_amount / 100).toFixed(0)}` : '无' }}</td>
+                <td class="px-4 py-3">{{ c.used_quantity }} / {{ c.total_quantity }}</td>
+                <td class="px-4 py-3 text-gray-400 text-xs">{{ formatDate(c.valid_from) }} ~ {{ formatDate(c.valid_until) }}</td>
+                <td class="px-4 py-3">
+                  <span :class="c.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'" class="px-2 py-0.5 rounded-full text-xs font-medium">
+                    {{ c.status === 'active' ? '启用' : '停用' }}
+                  </span>
+                </td>
+                <td class="px-4 py-3">
+                  <button @click="toggleCoupon(c)" class="text-sky-600 hover:text-sky-800 text-xs font-medium">
+                    {{ c.status === 'active' ? '停用' : '启用' }}
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="coupons.length === 0" class="text-center py-8 text-gray-400">暂无优惠券</div>
+        </div>
+      </div>
+
+      <!-- 退款 -->
+      <div v-show="activeTab === 'refunds'" class="space-y-4">
+        <div class="flex gap-3 items-center">
+          <select v-model="refundFilter" @change="loadRefunds" class="border border-gray-200 rounded-xl px-3 py-2 text-sm">
+            <option value="">全部状态</option>
+            <option value="requested">待审核</option>
+            <option value="refunded">已退款</option>
+            <option value="rejected">已驳回</option>
+          </select>
+          <button @click="loadRefunds" class="px-4 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 transition text-sm">🔄 刷新</button>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-sky-100 overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-sky-50 text-sky-800">
+              <tr>
+                <th class="px-4 py-3 text-left">学员</th>
+                <th class="px-4 py-3 text-left">场次</th>
+                <th class="px-4 py-3 text-left">退款金额</th>
+                <th class="px-4 py-3 text-left">原因</th>
+                <th class="px-4 py-3 text-left">状态</th>
+                <th class="px-4 py-3 text-left">申请时间</th>
+                <th class="px-4 py-3 text-left">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in refunds" :key="r.id" class="border-t border-gray-50 hover:bg-gray-50">
+                <td class="px-4 py-3">{{ r.student_name }}</td>
+                <td class="px-4 py-3">{{ r.session_title }}</td>
+                <td class="px-4 py-3 font-medium text-orange-500">¥{{ (r.amount / 100).toFixed(2) }}</td>
+                <td class="px-4 py-3 text-gray-600 max-w-xs truncate">{{ r.reason }}</td>
+                <td class="px-4 py-3">
+                  <span :class="refundStatusClass(r.status)" class="px-2 py-0.5 rounded-full text-xs font-medium">{{ refundStatusLabel(r.status) }}</span>
+                </td>
+                <td class="px-4 py-3 text-gray-400 text-xs">{{ new Date(r.requested_at).toLocaleString('zh-CN') }}</td>
+                <td class="px-4 py-3">
+                  <div v-if="r.status === 'requested'" class="flex gap-2">
+                    <button @click="approveRefund(r)" :disabled="processingRefund === r.id"
+                      class="px-3 py-1 rounded-lg bg-green-500 text-white hover:bg-green-600 disabled:opacity-50 text-xs font-medium">通过</button>
+                    <button @click="rejectRefund(r)" :disabled="processingRefund === r.id"
+                      class="px-3 py-1 rounded-lg bg-gray-200 text-gray-600 hover:bg-gray-300 disabled:opacity-50 text-xs font-medium">驳回</button>
+                  </div>
+                  <span v-else class="text-gray-300 text-xs">已处理</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="refunds.length === 0" class="text-center py-8 text-gray-400">暂无退款申请</div>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, reactive } from 'vue'
 import { useApi } from '@/composables/useApi'
 
-const { get, download } = useApi()
+const { get, post, patch, download } = useApi()
 const adminSecret = ref('changeme')
 const authenticated = ref(false)
 const loginError = ref('')
 const filterStatus = ref('')
 const exporting = ref(false)
-const stats = ref({ total_orders: 0, paid_orders: 0, pending_orders: 0, expired_orders: 0, total_revenue: 0 })
+const activeTab = ref<'orders' | 'coupons' | 'refunds'>('orders')
+
+const tabs = [
+  { key: 'orders' as const, label: '订单' },
+  { key: 'coupons' as const, label: '优惠券' },
+  { key: 'refunds' as const, label: '退款审批' },
+]
+
+const stats = ref({
+  total_orders: 0, paid_orders: 0, pending_orders: 0, expired_orders: 0,
+  refunded_orders: 0, refunding_orders: 0, total_revenue: 0, refunded_amount: 0,
+  total_discount: 0, pending_refunds: 0,
+})
 
 interface OrderRow {
   id: string
@@ -94,33 +275,108 @@ interface OrderRow {
   parent_name: string
   parent_phone: string
   amount: number
+  discount_amount: number
+  coupon_code: string | null
   status: string
   created_at: string
 }
 
+interface CouponRow {
+  id: string
+  code: string
+  name: string
+  discount_type: string
+  discount_value: number
+  min_amount: number
+  max_discount: number
+  total_quantity: number
+  used_quantity: number
+  valid_from: string
+  valid_until: string
+  status: string
+}
+
+interface RefundRow {
+  id: string
+  order_id: string
+  amount: number
+  reason: string
+  status: string
+  requested_at: string
+  student_name: string
+  session_title: string
+}
+
 const orders = ref<OrderRow[]>([])
+const coupons = ref<CouponRow[]>([])
+const refunds = ref<RefundRow[]>([])
+
+const showCouponForm = ref(false)
+const creatingCoupon = ref(false)
+const couponError = ref('')
+const refundFilter = ref('')
+const processingRefund = ref<string | null>(null)
+
+const couponForm = reactive({
+  code: '',
+  name: '',
+  discount_type: 'fixed',
+  discount_value: 50,
+  min_amount: 0,
+  max_discount: 0,
+  total_quantity: 100,
+  valid_from: '',
+  valid_until: '',
+})
 
 const statCards = computed(() => [
   { label: '总订单', value: stats.value.total_orders, color: 'text-sky-600' },
   { label: '已支付', value: stats.value.paid_orders, color: 'text-green-600' },
   { label: '待支付', value: stats.value.pending_orders, color: 'text-yellow-600' },
-  { label: '总收入', value: `¥${(stats.value.total_revenue / 100).toFixed(2)}`, color: 'text-orange-600' },
+  { label: '已退款', value: stats.value.refunded_orders, color: 'text-gray-500' },
+  { label: '总收入', value: `¥${(stats.value.total_revenue / 100).toFixed(0)}`, color: 'text-orange-600' },
+  { label: '优惠总额', value: `¥${(stats.value.total_discount / 100).toFixed(0)}`, color: 'text-pink-600' },
+  { label: '待审退款', value: stats.value.pending_refunds, color: 'text-red-600' },
 ])
 
+function authHeader() {
+  return { 'X-Admin-Secret': adminSecret.value }
+}
+
 function orderStatusLabel(s: string) {
-  const m: Record<string, string> = { pending: '待支付', paid: '已支付', expired: '已过期', cancelled: '已取消' }
+  const m: Record<string, string> = { pending: '待支付', paid: '已支付', expired: '已过期', cancelled: '已取消', refunding: '退款审核中', refunded: '已退款' }
   return m[s] || s
 }
 
 function orderStatusClass(s: string) {
-  const m: Record<string, string> = { pending: 'bg-yellow-100 text-yellow-700', paid: 'bg-green-100 text-green-700', expired: 'bg-red-100 text-red-700' }
+  const m: Record<string, string> = { pending: 'bg-yellow-100 text-yellow-700', paid: 'bg-green-100 text-green-700', expired: 'bg-red-100 text-red-700', refunding: 'bg-amber-100 text-amber-700', refunded: 'bg-gray-100 text-gray-600' }
   return m[s] || 'bg-gray-100 text-gray-600'
+}
+
+function refundStatusLabel(s: string) {
+  const m: Record<string, string> = { requested: '待审核', refunded: '已退款', rejected: '已驳回' }
+  return m[s] || s
+}
+
+function refundStatusClass(s: string) {
+  const m: Record<string, string> = { requested: 'bg-amber-100 text-amber-700', refunded: 'bg-green-100 text-green-700', rejected: 'bg-gray-100 text-gray-500' }
+  return m[s] || 'bg-gray-100 text-gray-600'
+}
+
+function couponDiscountText(c: CouponRow) {
+  if (c.discount_type === 'fixed') return `立减 ¥${(c.discount_value / 100).toFixed(0)}`
+  const cap = c.max_discount > 0 ? `，最高¥${(c.max_discount / 100).toFixed(0)}` : ''
+  return `立减 ${c.discount_value}%${cap}`
+}
+
+function formatDate(iso: string) {
+  return new Date(iso).toLocaleDateString('zh-CN')
 }
 
 async function login() {
   loginError.value = ''
   try {
-    await get('/admin/stats', { 'X-Admin-Secret': adminSecret.value })
+    await get('/admin/stats', authHeader())
     authenticated.value = true
     loadStats()
     loadOrders()
@@ -129,23 +385,107 @@ async function login() {
   }
 }
 
+function switchTab(key: 'orders' | 'coupons' | 'refunds') {
+  activeTab.value = key
+  if (key === 'coupons' && coupons.value.length === 0) loadCoupons()
+  if (key === 'refunds') loadRefunds()
+}
+
 async function loadStats() {
   try {
-    stats.value = await get('/admin/stats', { 'X-Admin-Secret': adminSecret.value })
+    stats.value = await get('/admin/stats', authHeader())
   } catch {}
 }
 
 async function loadOrders() {
   try {
     const path = filterStatus.value ? `/admin/orders?status=${filterStatus.value}` : '/admin/orders'
-    orders.value = await get<OrderRow[]>(path, { 'X-Admin-Secret': adminSecret.value })
+    orders.value = await get<OrderRow[]>(path, authHeader())
   } catch {}
+}
+
+async function loadCoupons() {
+  try {
+    coupons.value = await get<CouponRow[]>('/admin/coupons', authHeader())
+  } catch {}
+}
+
+async function loadRefunds() {
+  try {
+    const path = refundFilter.value ? `/admin/refunds?status=${refundFilter.value}` : '/admin/refunds'
+    refunds.value = await get<RefundRow[]>(path, authHeader())
+    loadStats()
+  } catch {}
+}
+
+async function createCoupon() {
+  couponError.value = ''
+  if (!couponForm.code || !couponForm.name) { couponError.value = '请填写优惠码与名称'; return }
+  if (!couponForm.valid_from || !couponForm.valid_until) { couponError.value = '请选择有效期'; return }
+  creatingCoupon.value = true
+  try {
+    const isPercent = couponForm.discount_type === 'percent'
+    await post('/admin/coupons', {
+      code: couponForm.code.trim().toUpperCase(),
+      name: couponForm.name.trim(),
+      discount_type: couponForm.discount_type,
+      discount_value: isPercent ? couponForm.discount_value : Math.round(couponForm.discount_value * 100),
+      min_amount: Math.round((couponForm.min_amount || 0) * 100),
+      max_discount: isPercent ? Math.round((couponForm.max_discount || 0) * 100) : 0,
+      total_quantity: couponForm.total_quantity,
+      valid_from: new Date(couponForm.valid_from).toISOString(),
+      valid_until: new Date(couponForm.valid_until).toISOString(),
+    }, authHeader())
+    showCouponForm.value = false
+    couponForm.code = ''
+    couponForm.name = ''
+    await loadCoupons()
+  } catch (e: any) {
+    couponError.value = e.message || '创建失败'
+  } finally {
+    creatingCoupon.value = false
+  }
+}
+
+async function toggleCoupon(c: CouponRow) {
+  const next = c.status === 'active' ? 'disabled' : 'active'
+  try {
+    await patch(`/admin/coupons/${c.id}`, { status: next }, authHeader())
+    c.status = next
+  } catch (e: any) {
+    alert(e.message || '操作失败')
+  }
+}
+
+async function approveRefund(r: RefundRow) {
+  processingRefund.value = r.id
+  try {
+    await post(`/admin/refunds/${r.id}/approve`, { operator: '管理员' }, authHeader())
+    await loadRefunds()
+  } catch (e: any) {
+    alert(e.message || '审批失败')
+  } finally {
+    processingRefund.value = null
+  }
+}
+
+async function rejectRefund(r: RefundRow) {
+  const remark = prompt('请输入驳回原因（可选）') ?? undefined
+  processingRefund.value = r.id
+  try {
+    await post(`/admin/refunds/${r.id}/reject`, { remark }, authHeader())
+    await loadRefunds()
+  } catch (e: any) {
+    alert(e.message || '驳回失败')
+  } finally {
+    processingRefund.value = null
+  }
 }
 
 async function exportCsv() {
   exporting.value = true
   try {
-    await download('/admin/orders/export', 'orders.csv', { 'X-Admin-Secret': adminSecret.value })
+    await download('/admin/orders/export', 'orders.csv', authHeader())
   } catch (e: any) {
     alert(e.message || '导出失败')
   } finally {
