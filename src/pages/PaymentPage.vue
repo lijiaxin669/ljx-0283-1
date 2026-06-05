@@ -1,8 +1,13 @@
 <template>
   <div class="max-w-lg mx-auto">
+    <button @click="router.push('/')" class="flex items-center gap-1 text-sky-600 hover:text-sky-800 mb-6 text-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+      返回选班
+    </button>
+
     <h1 class="text-2xl font-bold text-sky-900 mb-6">💳 支付确认</h1>
 
-    <div v-if="loading" class="text-center py-16 text-sky-500">加载订单信息...</div>
+    <div v-if="loading && !order" class="text-center py-16 text-sky-500">加载订单信息...</div>
 
     <div v-else-if="order" class="space-y-6">
       <div class="bg-white rounded-2xl shadow-sm border border-sky-100 p-6">
@@ -17,7 +22,10 @@
         </div>
 
         <div v-if="order.status === 'pending'" class="mt-4">
-          <div class="text-xs text-gray-400 mb-3">倒计时：<span class="text-red-500 font-mono">{{ countdown }}</span></div>
+          <div class="text-sm text-gray-500 mb-1">剩余支付时间</div>
+          <div class="text-2xl font-mono font-bold" :class="countdownMinutes <= 3 ? 'text-red-500' : 'text-sky-600'">
+            {{ countdown }}
+          </div>
         </div>
       </div>
 
@@ -43,28 +51,41 @@
         </button>
       </div>
 
-      <div v-if="paymentCreated" class="bg-white rounded-2xl shadow-sm border border-sky-100 p-6 text-center">
+      <div v-if="paymentCreated && order.status === 'pending'" class="bg-white rounded-2xl shadow-sm border border-sky-100 p-6 text-center">
         <div class="text-4xl mb-3">⏳</div>
-        <p class="text-gray-600 mb-4">支付创建成功，请完成支付</p>
-        <p class="text-xs text-gray-400 mb-4">支付单号：{{ paymentId }}</p>
-        <button @click="simulateCallback"
-          class="px-6 py-2 rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition text-sm">
-          模拟支付回调（测试用）
+        <p class="text-gray-600 mb-2">支付创建成功，请完成支付</p>
+        <p class="text-xs text-gray-400 mb-6">支付单号：{{ paymentId }}</p>
+        <div class="space-y-3">
+          <button @click="simulateCallback"
+            class="w-full px-6 py-2.5 rounded-xl bg-green-500 text-white hover:bg-green-600 transition text-sm font-medium">
+            ✅ 模拟支付成功
+          </button>
+          <p class="text-xs text-gray-400">点击上方按钮模拟支付回调，验证支付幂等键 payment_id</p>
+        </div>
+      </div>
+
+      <div v-if="order.status === 'pending'" class="bg-amber-50 rounded-2xl border border-amber-200 p-4">
+        <p class="text-xs text-amber-600 mb-3">⏱ 测试：模拟 15 分钟后自动释放名额</p>
+        <button @click="forceExpire"
+          class="w-full px-4 py-2 rounded-xl bg-amber-500 text-white hover:bg-amber-600 transition text-sm font-medium">
+          模拟订单过期（释放名额）
         </button>
       </div>
 
-      <div v-if="order.status === 'paid'" class="text-center">
-        <div class="text-4xl mb-3">✅</div>
-        <p class="text-green-600 font-bold text-lg mb-4">支付成功！</p>
+      <div v-if="order.status === 'paid'" class="text-center bg-white rounded-2xl shadow-sm border border-green-200 p-8">
+        <div class="text-5xl mb-4">✅</div>
+        <p class="text-green-600 font-bold text-xl mb-2">支付成功！</p>
+        <p class="text-gray-400 text-sm mb-6">名额已锁定，请准时参加</p>
         <router-link :to="{ name: 'voucher', query: { orderId: order.id } }"
           class="inline-block px-6 py-3 rounded-xl bg-sky-500 text-white hover:bg-sky-600 transition font-medium">
           查看电子凭证
         </router-link>
       </div>
 
-      <div v-if="order.status === 'expired'" class="text-center">
-        <div class="text-4xl mb-3">⏰</div>
-        <p class="text-red-500 font-bold text-lg mb-4">订单已过期，名额已释放</p>
+      <div v-if="order.status === 'expired'" class="text-center bg-white rounded-2xl shadow-sm border border-red-200 p-8">
+        <div class="text-5xl mb-4">⏰</div>
+        <p class="text-red-500 font-bold text-xl mb-2">订单已过期</p>
+        <p class="text-gray-500 text-sm mb-6">15 分钟未支付，名额已自动释放</p>
         <router-link to="/" class="inline-block px-6 py-3 rounded-xl bg-sky-500 text-white hover:bg-sky-600 transition font-medium">
           重新选班
         </router-link>
@@ -77,10 +98,11 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useApi } from '@/composables/useApi'
+import { mockApi } from '@/mock'
 
 const route = useRoute()
 const router = useRouter()
-const { loading, error, get, post } = useApi()
+const { loading, get, post } = useApi()
 
 const orderId = route.query.orderId as string
 
@@ -98,6 +120,7 @@ const paymentCreated = ref(false)
 const paymentId = ref('')
 const creatingPayment = ref(false)
 const countdown = ref('')
+const countdownMinutes = ref(15)
 let timer: ReturnType<typeof setInterval> | null = null
 
 const statusLabel = computed(() => {
@@ -118,19 +141,24 @@ function updateCountdown() {
   if (!order.value || order.value.status !== 'pending') return
   const diff = new Date(order.value.expire_at).getTime() - Date.now()
   if (diff <= 0) {
-    countdown.value = '已过期'
+    countdown.value = '00:00'
+    countdownMinutes.value = 0
+    refreshOrder()
     return
   }
-  const m = Math.floor(diff / 60000)
-  const s = Math.floor((diff % 60000) / 1000)
+  const totalSeconds = Math.floor(diff / 1000)
+  const m = Math.floor(totalSeconds / 60)
+  const s = totalSeconds % 60
   countdown.value = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  countdownMinutes.value = m
 }
 
 async function refreshOrder() {
   try {
     order.value = await get<OrderInfo>(`/orders/${orderId}`)
-    if (order.value?.status === 'paid') {
-      if (timer) { clearInterval(timer); timer = null }
+    if (order.value?.status !== 'pending' && timer) {
+      clearInterval(timer)
+      timer = null
     }
   } catch {}
 }
@@ -166,16 +194,18 @@ async function simulateCallback() {
   }
 }
 
+function forceExpire() {
+  mockApi.forceExpireOrder(orderId)
+  refreshOrder()
+}
+
 onMounted(async () => {
   if (!orderId) { router.push('/'); return }
   await refreshOrder()
-  timer = setInterval(async () => {
-    updateCountdown()
-    if (order.value?.status === 'pending') {
-      await refreshOrder()
-    }
-  }, 5000)
   updateCountdown()
+  timer = setInterval(() => {
+    updateCountdown()
+  }, 1000)
 })
 
 onUnmounted(() => {

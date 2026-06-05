@@ -9,11 +9,13 @@
       <div class="bg-white rounded-2xl shadow-sm border border-sky-100 p-6">
         <h2 class="text-lg font-bold text-gray-900 mb-4">管理端登录</h2>
         <div class="space-y-4">
-          <input v-model="adminSecret" type="password" placeholder="请输入管理密钥"
-            class="w-full border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-sky-300 outline-none" />
+          <input v-model="adminSecret" type="password" placeholder="请输入管理密钥（默认 changeme）"
+            class="w-full border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-sky-300 outline-none"
+            @keyup.enter="login" />
           <button @click="login" class="w-full py-2.5 rounded-xl bg-sky-500 text-white hover:bg-sky-600 transition font-medium">
             登录
           </button>
+          <p v-if="loginError" class="text-red-500 text-sm">{{ loginError }}</p>
         </div>
       </div>
     </div>
@@ -26,9 +28,10 @@
         </div>
       </div>
 
-      <div class="flex gap-3">
-        <button @click="exportCsv" class="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-600 transition text-sm font-medium">
-          📥 导出 CSV
+      <div class="flex gap-3 items-center">
+        <button @click="exportCsv" :disabled="exporting"
+          class="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-600 transition text-sm font-medium disabled:bg-gray-300">
+          {{ exporting ? '导出中...' : '📥 导出 CSV' }}
         </button>
         <select v-model="filterStatus" @change="loadOrders" class="border border-gray-200 rounded-xl px-3 py-2 text-sm">
           <option value="">全部状态</option>
@@ -36,6 +39,9 @@
           <option value="paid">已支付</option>
           <option value="expired">已过期</option>
         </select>
+        <button @click="loadStats(); loadOrders()" class="px-4 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 transition text-sm">
+          🔄 刷新
+        </button>
       </div>
 
       <div class="bg-white rounded-2xl shadow-sm border border-sky-100 overflow-hidden">
@@ -70,13 +76,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { useApi } from '@/composables/useApi'
 
 const { get, download } = useApi()
-const adminSecret = ref('')
+const adminSecret = ref('changeme')
 const authenticated = ref(false)
+const loginError = ref('')
 const filterStatus = ref('')
+const exporting = ref(false)
 const stats = ref({ total_orders: 0, paid_orders: 0, pending_orders: 0, expired_orders: 0, total_revenue: 0 })
 
 interface OrderRow {
@@ -109,32 +117,39 @@ function orderStatusClass(s: string) {
   return m[s] || 'bg-gray-100 text-gray-600'
 }
 
-function login() {
-  if (adminSecret.value.trim()) {
+async function login() {
+  loginError.value = ''
+  try {
+    await get('/admin/stats', { 'X-Admin-Secret': adminSecret.value })
     authenticated.value = true
     loadStats()
     loadOrders()
+  } catch (e: any) {
+    loginError.value = e.message || '认证失败'
   }
 }
 
 async function loadStats() {
   try {
-    stats.value = await get('/admin/stats')
+    stats.value = await get('/admin/stats', { 'X-Admin-Secret': adminSecret.value })
   } catch {}
 }
 
 async function loadOrders() {
   try {
     const path = filterStatus.value ? `/admin/orders?status=${filterStatus.value}` : '/admin/orders'
-    orders.value = await get<OrderRow[]>(path)
+    orders.value = await get<OrderRow[]>(path, { 'X-Admin-Secret': adminSecret.value })
   } catch {}
 }
 
 async function exportCsv() {
+  exporting.value = true
   try {
     await download('/admin/orders/export', 'orders.csv', { 'X-Admin-Secret': adminSecret.value })
   } catch (e: any) {
     alert(e.message || '导出失败')
+  } finally {
+    exporting.value = false
   }
 }
 </script>
