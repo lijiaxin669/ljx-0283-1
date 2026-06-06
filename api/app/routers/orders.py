@@ -90,4 +90,7 @@ async def get_voucher(order_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
         coupon_code=order.coupon_code,
         payment_id=payment.payment_id,
         paid_at=payment.paid_at,
+        checkin_code=order.checkin_code or "",
+        checkin_status=order.checkin_status,
+        checked_in_at=order.checked_in_at,
     )

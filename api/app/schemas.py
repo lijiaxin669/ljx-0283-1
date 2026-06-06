@@ -86,6 +86,9 @@ class OrderOut(BaseModel):
     discount_amount: int
     coupon_code: str | None
     expire_at: datetime
+    checkin_code: str | None
+    checkin_status: str
+    checked_in_at: datetime | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -134,6 +137,9 @@ class VoucherOut(BaseModel):
     coupon_code: str | None
     payment_id: str
     paid_at: datetime
+    checkin_code: str
+    checkin_status: str
+    checked_in_at: datetime | None
 
 
 # ---------------- 优惠券 ----------------
@@ -220,3 +226,49 @@ class RefundOut(BaseModel):
 class RefundDetailOut(RefundOut):
     student_name: str
     session_title: str
+
+
+# ---------------- 签到 ----------------
+
+class CheckinRequest(BaseModel):
+    checkin_code: str = Field(..., max_length=8)
+
+
+class CheckinOrderRow(BaseModel):
+    id: uuid.UUID
+    student_name: str
+    student_age: int
+    parent_name: str
+    parent_phone: str
+    checkin_status: str
+    checked_in_at: datetime | None
+    paid_at: datetime | None
+    amount: int
+    model_config = {"from_attributes": True}
+
+
+class CheckinOut(BaseModel):
+    success: bool
+    message: str
+    order_id: uuid.UUID | None = None
+    student_name: str | None = None
+    student_age: int | None = None
+    parent_name: str | None = None
+    parent_phone: str | None = None
+    session_title: str | None = None
+    coach: str | None = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    checked_in_at: datetime | None = None
+
+
+class SessionCheckinOut(BaseModel):
+    session_id: uuid.UUID
+    session_title: str
+    coach: str
+    start_time: datetime
+    end_time: datetime
+    total_booked: int
+    total_checked_in: int
+    total_absent: int
+    orders: list[CheckinOrderRow]

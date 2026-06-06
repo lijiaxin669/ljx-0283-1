@@ -15,6 +15,7 @@ from app.schemas import (
     SessionStatusUpdate, SessionDetailOut,
     CouponOut, CouponCreate, CouponUpdate,
     RefundDetailOut, RefundApprove, RefundReject,
+    CheckinRequest, CheckinOut, SessionCheckinOut, CheckinOrderRow,
 )
 from app.services.refund import approve_refund, reject_refund, RefundError
 
@@ -432,4 +433,126 @@ async def _refund_detail(db: AsyncSession, refund_id: uuid.UUID) -> RefundDetail
         processed_at=refund.processed_at,
         student_name=order.student_name,
         session_title=session.title,
+    )
+
+
+# ---------------- 签到管理 ----------------
+
+from datetime import datetime, date
+
+
+@router.post("/checkin", response_model=CheckinOut)
+async def admin_checkin(
+    data: CheckinRequest,
+    _auth: bool = Depends(verify_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = (
+        select(Order, Session, Payment)
+        .join(Session, Order.session_id == Session.id)
+        .outerjoin(Payment, Payment.order_id == Order.id)
+        .where(Order.checkin_code == data.checkin_code.upper())
+    )
+    result = await db.execute(stmt)
+    row = result.first()
+
+    if row is None:
+        return CheckinOut(success=False, message="核销码无效或不存在")
+
+    order, session, payment = row
+
+    if order.status != "paid":
+        if order.status == "refunded" or order.status == "refunding":
+            return CheckinOut(success=False, message="该订单已申请退款或已退款")
+        return CheckinOut(success=False, message=f"订单状态异常：{order.status}")
+
+    session_date = session.start_time.date()
+    today = datetime.utcnow().date()
+    if session_date != today:
+        return CheckinOut(
+            success=False,
+            message=f"场次日期不匹配，该场次为 {session_date.strftime('%Y-%m-%d')} 的课程"
+        )
+
+    if order.checkin_status == "checked_in":
+        return CheckinOut(
+            success=False,
+            message="该订单已签到，请勿重复签到",
+            order_id=order.id,
+            student_name=order.student_name,
+            checked_in_at=order.checked_in_at,
+        )
+
+    from sqlalchemy import func
+    order.checkin_status = "checked_in"
+    order.checked_in_at = datetime.utcnow()
+    await db.commit()
+
+    return CheckinOut(
+        success=True,
+        message="签到成功",
+        order_id=order.id,
+        student_name=order.student_name,
+        student_age=order.student_age,
+        parent_name=order.parent_name,
+        parent_phone=order.parent_phone,
+        session_title=session.title,
+        coach=session.coach,
+        start_time=session.start_time,
+        end_time=session.end_time,
+        checked_in_at=order.checked_in_at,
+    )
+
+
+@router.get("/sessions/{session_id}/checkin", response_model=SessionCheckinOut)
+async def admin_get_session_checkin(
+    session_id: uuid.UUID,
+    _auth: bool = Depends(verify_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    session_result = await db.execute(select(Session).where(Session.id == session_id))
+    session = session_result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="场次不存在")
+
+    stmt = (
+        select(Order, Payment)
+        .outerjoin(Payment, Payment.order_id == Order.id)
+        .where(
+            Order.session_id == session_id,
+            Order.status.in_(["paid", "refunding"])
+        )
+        .order_by(Order.created_at)
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    total_booked = len(rows)
+    total_checked_in = sum(1 for order, _ in rows if order.checkin_status == "checked_in")
+    total_absent = total_booked - total_checked_in
+
+    order_rows = []
+    for order, payment in rows:
+        order_rows.append(CheckinOrderRow(
+            id=order.id,
+            student_name=order.student_name,
+            student_age=order.student_age,
+            parent_name=order.parent_name,
+            parent_phone=order.parent_phone,
+            checkin_status=order.checkin_status,
+            checked_in_at=order.checked_in_at,
+            paid_at=payment.paid_at if payment else None,
+            amount=order.amount,
+        ))
+
+    return SessionCheckinOut(
+        session_id=session.id,
+        session_title=session.title,
+        coach=session.coach,
+        start_time=session.start_time,
+        end_time=session.end_time,
+        total_booked=total_booked,
+        total_checked_in=total_checked_in,
+        total_absent=total_absent,
+        orders=order_rows,
     )

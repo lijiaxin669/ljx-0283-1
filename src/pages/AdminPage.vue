@@ -239,6 +239,7 @@
                     <button @click="openSessionDetail(s)" class="text-sky-600 hover:text-sky-800 text-xs font-medium">详情</button>
                     <button @click="openEditSession(s)" class="text-sky-600 hover:text-sky-800 text-xs font-medium">编辑</button>
                     <button @click="openSlotsEditor(s)" class="text-amber-600 hover:text-amber-800 text-xs font-medium">名额</button>
+                    <button @click="openCheckinRoster(s)" class="text-emerald-600 hover:text-emerald-800 text-xs font-medium">签到</button>
                     <button @click="toggleSessionStatus(s)" :disabled="processingSession === s.id"
                       class="text-xs font-medium disabled:opacity-50"
                       :class="s.status === 'open' ? 'text-red-600 hover:text-red-800' : 'text-green-600 hover:text-green-800'">
@@ -448,6 +449,176 @@
           <div v-if="refunds.length === 0" class="text-center py-8 text-gray-400">暂无退款申请</div>
         </div>
       </div>
+
+      <!-- 签到管理 -->
+      <div v-show="activeTab === 'checkin'" class="space-y-6">
+        <div class="bg-white rounded-2xl shadow-sm border border-sky-100 p-6">
+          <h3 class="text-lg font-bold text-sky-900 mb-4">📋 现场签到</h3>
+          <div class="space-y-4">
+            <div class="flex gap-3">
+              <input
+                v-model="checkinCode"
+                type="text"
+                placeholder="请输入 8 位核销码，或点击扫码模拟"
+                maxlength="8"
+                class="flex-1 border border-gray-200 rounded-xl px-4 py-3 font-mono text-lg tracking-wider outline-none focus:ring-2 focus:ring-sky-300"
+                @keyup.enter="doCheckin"
+              />
+              <button
+                @click="simulateScan"
+                class="px-6 py-3 rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 transition font-medium"
+              >
+                📱 扫码模拟
+              </button>
+              <button
+                @click="doCheckin"
+                :disabled="checkingIn || !checkinCode.trim()"
+                class="px-6 py-3 rounded-xl bg-sky-500 text-white hover:bg-sky-600 transition font-medium disabled:bg-gray-300"
+              >
+                {{ checkingIn ? '签到中...' : '确认签到' }}
+              </button>
+            </div>
+
+            <div v-if="checkinResult" class="mt-6">
+              <div
+                :class="checkinResult.success ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'"
+                class="border rounded-xl p-5"
+              >
+                <div class="flex items-start gap-3">
+                  <div class="text-3xl">
+                    {{ checkinResult.success ? '✅' : '❌' }}
+                  </div>
+                  <div class="flex-1">
+                    <div
+                      :class="checkinResult.success ? 'text-green-800' : 'text-red-800'"
+                      class="font-bold text-lg mb-2"
+                    >
+                      {{ checkinResult.message }}
+                    </div>
+
+                    <div v-if="checkinResult.success && checkinResult.student_name" class="mt-4 grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <div class="text-gray-500">学员姓名</div>
+                        <div class="font-bold text-gray-900">{{ checkinResult.student_name }}</div>
+                      </div>
+                      <div>
+                        <div class="text-gray-500">学员年龄</div>
+                        <div class="font-bold text-gray-900">{{ checkinResult.student_age }} 岁</div>
+                      </div>
+                      <div>
+                        <div class="text-gray-500">家长姓名</div>
+                        <div class="font-bold text-gray-900">{{ checkinResult.parent_name }}</div>
+                      </div>
+                      <div>
+                        <div class="text-gray-500">家长电话</div>
+                        <div class="font-bold text-gray-900">{{ checkinResult.parent_phone }}</div>
+                      </div>
+                      <div class="col-span-2">
+                        <div class="text-gray-500">场次</div>
+                        <div class="font-bold text-gray-900">{{ checkinResult.session_title }}</div>
+                      </div>
+                      <div>
+                        <div class="text-gray-500">教练</div>
+                        <div class="font-bold text-gray-900">{{ checkinResult.coach }}</div>
+                      </div>
+                      <div>
+                        <div class="text-gray-500">签到时间</div>
+                        <div class="font-bold text-gray-900">
+                          {{ checkinResult.checked_in_at ? new Date(checkinResult.checked_in_at).toLocaleString('zh-CN') : '-' }}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div v-if="!checkinResult.success && checkinResult.order_id" class="mt-4 text-sm text-gray-600">
+                      <p>学员：{{ checkinResult.student_name }}</p>
+                      <p v-if="checkinResult.checked_in_at">上次签到：{{ new Date(checkinResult.checked_in_at).toLocaleString('zh-CN') }}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 签到名册弹窗 -->
+      <div v-if="showCheckinRoster" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+          <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+            <h3 class="text-lg font-bold text-sky-900">📋 场次签到名册</h3>
+            <button @click="closeCheckinRoster" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+          </div>
+
+          <div v-if="loadingRoster" class="p-12 text-center text-sky-500">加载中...</div>
+
+          <div v-else-if="checkinRoster" class="p-6">
+            <div class="mb-6">
+              <h4 class="font-bold text-sky-900 text-lg">{{ checkinRoster.session_title }}</h4>
+              <div class="text-sm text-gray-500 mt-1">
+                教练：{{ checkinRoster.coach }} · {{ new Date(checkinRoster.start_time).toLocaleString('zh-CN') }} — {{ new Date(checkinRoster.end_time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }}
+              </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-4 mb-6">
+              <div class="bg-sky-50 rounded-xl p-4 text-center">
+                <div class="text-3xl font-bold text-sky-600">{{ checkinRoster.total_booked }}</div>
+                <div class="text-xs text-gray-500 mt-1">已报名</div>
+              </div>
+              <div class="bg-green-50 rounded-xl p-4 text-center">
+                <div class="text-3xl font-bold text-green-600">{{ checkinRoster.total_checked_in }}</div>
+                <div class="text-xs text-gray-500 mt-1">已签到</div>
+              </div>
+              <div class="bg-red-50 rounded-xl p-4 text-center">
+                <div class="text-3xl font-bold text-red-600">{{ checkinRoster.total_absent }}</div>
+                <div class="text-xs text-gray-500 mt-1">未到</div>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-sky-50 text-sky-800">
+                  <tr>
+                    <th class="px-4 py-3 text-left">学员</th>
+                    <th class="px-4 py-3 text-left">家长</th>
+                    <th class="px-4 py-3 text-left">电话</th>
+                    <th class="px-4 py-3 text-left">实付</th>
+                    <th class="px-4 py-3 text-left">支付时间</th>
+                    <th class="px-4 py-3 text-left">签到状态</th>
+                    <th class="px-4 py-3 text-left">签到时间</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="o in checkinRoster.orders" :key="o.id" class="border-t border-gray-50 hover:bg-gray-50">
+                    <td class="px-4 py-3">
+                      <div class="font-medium">{{ o.student_name }}</div>
+                      <div class="text-xs text-gray-400">{{ o.student_age }} 岁</div>
+                    </td>
+                    <td class="px-4 py-3">{{ o.parent_name }}</td>
+                    <td class="px-4 py-3">{{ o.parent_phone }}</td>
+                    <td class="px-4 py-3 font-medium">¥{{ (o.amount / 100).toFixed(2) }}</td>
+                    <td class="px-4 py-3 text-gray-400 text-xs">
+                      {{ o.paid_at ? new Date(o.paid_at).toLocaleString('zh-CN') : '-' }}
+                    </td>
+                    <td class="px-4 py-3">
+                      <span :class="checkinStatusClass(o.checkin_status)" class="px-2 py-0.5 rounded-full text-xs font-medium">
+                        {{ checkinStatusLabel(o.checkin_status) }}
+                      </span>
+                    </td>
+                    <td class="px-4 py-3 text-gray-400 text-xs">
+                      {{ o.checked_in_at ? new Date(o.checked_in_at).toLocaleString('zh-CN') : '-' }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-if="checkinRoster.orders.length === 0" class="text-center py-8 text-gray-400">暂无报名记录</div>
+            </div>
+          </div>
+
+          <div class="px-6 py-4 border-t border-gray-100 flex justify-end">
+            <button @click="closeCheckinRoster" class="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-600 text-sm font-medium">关闭</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -462,13 +633,14 @@ const authenticated = ref(false)
 const loginError = ref('')
 const filterStatus = ref('')
 const exporting = ref(false)
-const activeTab = ref<'orders' | 'sessions' | 'coupons' | 'refunds'>('orders')
+const activeTab = ref<'orders' | 'sessions' | 'coupons' | 'refunds' | 'checkin'>('orders')
 
 const tabs = [
   { key: 'orders' as const, label: '订单' },
   { key: 'sessions' as const, label: '场次管理' },
   { key: 'coupons' as const, label: '优惠券' },
   { key: 'refunds' as const, label: '退款审批' },
+  { key: 'checkin' as const, label: '签到管理' },
 ]
 
 const stats = ref({
@@ -535,6 +707,45 @@ interface SessionDetailRow extends SessionRow {
   paid_amount: number
 }
 
+interface CheckinResult {
+  success: boolean
+  message: string
+  order_id: string | null
+  student_name: string | null
+  student_age: number | null
+  parent_name: string | null
+  parent_phone: string | null
+  session_title: string | null
+  coach: string | null
+  start_time: string | null
+  end_time: string | null
+  checked_in_at: string | null
+}
+
+interface CheckinOrderRow {
+  id: string
+  student_name: string
+  student_age: number
+  parent_name: string
+  parent_phone: string
+  checkin_status: string
+  checked_in_at: string | null
+  paid_at: string | null
+  amount: number
+}
+
+interface SessionCheckinResult {
+  session_id: string
+  session_title: string
+  coach: string
+  start_time: string
+  end_time: string
+  total_booked: number
+  total_checked_in: number
+  total_absent: number
+  orders: CheckinOrderRow[]
+}
+
 const orders = ref<OrderRow[]>([])
 const coupons = ref<CouponRow[]>([])
 const refunds = ref<RefundRow[]>([])
@@ -555,6 +766,13 @@ const sessionError = ref('')
 const processingSession = ref<string | null>(null)
 const editingSlots = ref<SessionRow | null>(null)
 const newSlotCount = ref(0)
+
+const checkinCode = ref('')
+const checkingIn = ref(false)
+const checkinResult = ref<CheckinResult | null>(null)
+const showCheckinRoster = ref(false)
+const checkinRoster = ref<SessionCheckinResult | null>(null)
+const loadingRoster = ref(false)
 
 const sessionForm = reactive({
   title: '',
@@ -634,11 +852,15 @@ async function login() {
   }
 }
 
-function switchTab(key: 'orders' | 'sessions' | 'coupons' | 'refunds') {
+function switchTab(key: 'orders' | 'sessions' | 'coupons' | 'refunds' | 'checkin') {
   activeTab.value = key
   if (key === 'sessions' && sessions.value.length === 0) loadSessions()
   if (key === 'coupons' && coupons.value.length === 0) loadCoupons()
   if (key === 'refunds') loadRefunds()
+  if (key === 'checkin') {
+    checkinCode.value = ''
+    checkinResult.value = null
+  }
 }
 
 async function loadStats() {
@@ -870,6 +1092,78 @@ async function openSessionDetail(s: SessionRow) {
 function closeSessionDetail() {
   showSessionDetail.value = false
   sessionDetail.value = null
+}
+
+async function doCheckin() {
+  if (!checkinCode.value.trim()) return
+  checkingIn.value = true
+  checkinResult.value = null
+  try {
+    checkinResult.value = await post<CheckinResult>(
+      '/admin/checkin',
+      { checkin_code: checkinCode.value.trim().toUpperCase() },
+      authHeader()
+    )
+  } catch (e: any) {
+    checkinResult.value = {
+      success: false,
+      message: e.message || '签到失败',
+      order_id: null,
+      student_name: null,
+      student_age: null,
+      parent_name: null,
+      parent_phone: null,
+      session_title: null,
+      coach: null,
+      start_time: null,
+      end_time: null,
+      checked_in_at: null,
+    }
+  } finally {
+    checkingIn.value = false
+  }
+}
+
+function simulateScan() {
+  const mockCodes = ['ABC12345', 'DEF67890', 'GHI11111']
+  const randomCode = mockCodes[Math.floor(Math.random() * mockCodes.length)]
+  checkinCode.value = randomCode
+  doCheckin()
+}
+
+function checkinStatusLabel(s: string) {
+  const m: Record<string, string> = { pending: '未签到', checked_in: '已签到' }
+  return m[s] || s
+}
+
+function checkinStatusClass(s: string) {
+  const m: Record<string, string> = {
+    pending: 'bg-yellow-100 text-yellow-700',
+    checked_in: 'bg-green-100 text-green-700'
+  }
+  return m[s] || 'bg-gray-100 text-gray-600'
+}
+
+async function openCheckinRoster(s: SessionRow) {
+  loadingRoster.value = true
+  showCheckinRoster.value = true
+  checkinRoster.value = null
+  try {
+    checkinRoster.value = await get<SessionCheckinResult>(
+      `/admin/sessions/${s.id}/checkin`,
+      authHeader()
+    )
+  } catch (e: any) {
+    alert(e.message || '获取签到名册失败')
+    showCheckinRoster.value = false
+  } finally {
+    loadingRoster.value = false
+  }
+}
+
+function closeCheckinRoster() {
+  showCheckinRoster.value = false
+  checkinRoster.value = null
 }
 
 async function exportCsv() {

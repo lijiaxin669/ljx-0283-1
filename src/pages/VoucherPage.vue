@@ -15,6 +15,28 @@
         </div>
 
         <div class="p-6 space-y-4">
+          <div class="flex justify-center py-2">
+            <div class="bg-white p-3 rounded-xl border border-gray-100">
+              <canvas ref="qrcodeCanvas" class="w-40 h-40"></canvas>
+            </div>
+          </div>
+
+          <div class="text-center">
+            <div class="text-xs text-gray-400 mb-1">核销码</div>
+            <div class="font-mono text-2xl font-bold tracking-wider text-sky-700">{{ voucher.checkin_code }}</div>
+          </div>
+
+          <div class="text-center">
+            <span :class="checkinStatusClass(voucher.checkin_status)" class="px-4 py-1.5 rounded-full text-sm font-medium">
+              {{ checkinStatusLabel(voucher.checkin_status) }}
+            </span>
+            <div v-if="voucher.checked_in_at" class="text-xs text-gray-400 mt-2">
+              签到时间：{{ formatTime(voucher.checked_in_at) }}
+            </div>
+          </div>
+
+          <hr class="border-dashed border-gray-200" />
+
           <div class="grid grid-cols-2 gap-4 text-sm">
             <div>
               <div class="text-gray-400 mb-1">学员姓名</div>
@@ -81,15 +103,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useApi } from '@/composables/useApi'
+import QRCode from 'qrcode'
 
 const route = useRoute()
 const router = useRouter()
 const { loading, get } = useApi()
 
 const orderId = route.query.orderId as string
+const qrcodeCanvas = ref<HTMLCanvasElement | null>(null)
 
 interface Voucher {
   order_id: string
@@ -107,6 +131,9 @@ interface Voucher {
   coupon_code: string | null
   payment_id: string
   paid_at: string
+  checkin_code: string
+  checkin_status: string
+  checked_in_at: string | null
 }
 
 const voucher = ref<Voucher | null>(null)
@@ -114,6 +141,40 @@ const voucher = ref<Voucher | null>(null)
 function formatTime(iso: string) {
   return new Date(iso).toLocaleString('zh-CN', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
+
+function checkinStatusLabel(s: string) {
+  const m: Record<string, string> = { pending: '待签到', checked_in: '已签到' }
+  return m[s] || s
+}
+
+function checkinStatusClass(s: string) {
+  const m: Record<string, string> = {
+    pending: 'bg-yellow-100 text-yellow-700',
+    checked_in: 'bg-green-100 text-green-700'
+  }
+  return m[s] || 'bg-gray-100 text-gray-600'
+}
+
+async function generateQRCode() {
+  if (!voucher.value || !qrcodeCanvas.value) return
+  const qrContent = JSON.stringify({
+    order_id: voucher.value.order_id,
+    checkin_code: voucher.value.checkin_code,
+  })
+  try {
+    await QRCode.toCanvas(qrcodeCanvas.value, qrContent, {
+      width: 160,
+      margin: 1,
+      color: { dark: '#0c4a6e', light: '#ffffff' },
+    })
+  } catch (e) {
+    console.error('QRCode generate error:', e)
+  }
+}
+
+watch(voucher, () => {
+  nextTick(() => generateQRCode())
+})
 
 onMounted(async () => {
   if (!orderId) { router.push('/'); return }

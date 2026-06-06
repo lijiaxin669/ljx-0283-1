@@ -1,4 +1,5 @@
 import uuid
+import secrets
 from datetime import datetime, timedelta
 
 from sqlalchemy import select, update
@@ -7,6 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models import Session, Order, Payment
 from app.services.coupon import redeem_coupon, release_coupon
+
+
+def generate_checkin_code() -> str:
+    return secrets.token_urlsafe(6).replace('-', '').replace('_', '').upper()[:8]
 
 
 async def lock_and_decrease_inventory(db: AsyncSession, session_id: uuid.UUID) -> Session | None:
@@ -124,6 +129,13 @@ async def confirm_payment(db: AsyncSession, payment_id: str, order_id: uuid.UUID
         await db.flush()
         return None
 
+    checkin_code = generate_checkin_code()
+    for _ in range(5):
+        existing = await db.execute(select(Order).where(Order.checkin_code == checkin_code))
+        if existing.scalar_one_or_none() is None:
+            break
+        checkin_code = generate_checkin_code()
+
     payment = Payment(
         order_id=order_id,
         payment_id=payment_id,
@@ -135,6 +147,8 @@ async def confirm_payment(db: AsyncSession, payment_id: str, order_id: uuid.UUID
     )
     db.add(payment)
     order.status = "paid"
+    order.checkin_code = checkin_code
+    order.checkin_status = "pending"
     await db.flush()
     await db.refresh(payment)
     return payment

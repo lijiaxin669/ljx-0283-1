@@ -43,6 +43,9 @@ class Order(Base):
     coupon_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("coupons.id"), nullable=True)
     coupon_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     expire_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    checkin_code: Mapped[str | None] = mapped_column(String(8), unique=True, nullable=True)
+    checkin_status: Mapped[str] = mapped_column(String(20), default="pending")
+    checked_in_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

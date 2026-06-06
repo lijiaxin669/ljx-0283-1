@@ -2,6 +2,15 @@ function genId(): string {
   return crypto.randomUUID()
 }
 
+function generateCheckinCode(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  let result = ''
+  for (let i = 0; i < 8; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return result
+}
+
 interface MockSession {
   id: string
   title: string
@@ -29,6 +38,9 @@ interface MockOrder {
   coupon_id: string | null
   coupon_code: string | null
   expire_at: string
+  checkin_code: string | null
+  checkin_status: string
+  checked_in_at: string | null
   created_at: string
 }
 
@@ -348,6 +360,44 @@ export const mockApi = {
       }
     }
 
+    const adminSessionCheckinMatch = path.match(/^\/admin\/sessions\/([a-f0-9-]+)\/checkin$/)
+    if (adminSessionCheckinMatch) {
+      verifyAdmin(headers)
+      const s = sessions.find(s => s.id === adminSessionCheckinMatch[1])
+      if (!s) throw new Error('场次不存在')
+      const sessionOrders = orders.filter(o =>
+        o.session_id === s.id && ['paid', 'refunding'].includes(o.status)
+      )
+      const totalBooked = sessionOrders.length
+      const totalCheckedIn = sessionOrders.filter(o => o.checkin_status === 'checked_in').length
+      const totalAbsent = totalBooked - totalCheckedIn
+      const orderList = sessionOrders.map(o => {
+        const payment = payments.find(p => p.order_id === o.id)
+        return {
+          id: o.id,
+          student_name: o.student_name,
+          student_age: o.student_age,
+          parent_name: o.parent_name,
+          parent_phone: o.parent_phone,
+          checkin_status: o.checkin_status,
+          checked_in_at: o.checked_in_at,
+          paid_at: payment?.paid_at || null,
+          amount: o.amount,
+        }
+      })
+      return {
+        session_id: s.id,
+        session_title: s.title,
+        coach: s.coach,
+        start_time: s.start_time,
+        end_time: s.end_time,
+        total_booked: totalBooked,
+        total_checked_in: totalCheckedIn,
+        total_absent: totalAbsent,
+        orders: orderList,
+      }
+    }
+
     const voucherMatch = path.match(/^\/orders\/([a-f0-9-]+)\/voucher$/)
     if (voucherMatch) {
       const orderId = voucherMatch[1]
@@ -371,6 +421,9 @@ export const mockApi = {
         coupon_code: order.coupon_code,
         payment_id: payment.payment_id,
         paid_at: payment.paid_at,
+        checkin_code: order.checkin_code || '',
+        checkin_status: order.checkin_status,
+        checked_in_at: order.checked_in_at,
       }
     }
 
@@ -451,6 +504,9 @@ export const mockApi = {
         coupon_id: couponId,
         coupon_code: appliedCode,
         expire_at: expireAt.toISOString(),
+        checkin_code: null,
+        checkin_status: 'pending',
+        checked_in_at: null,
         created_at: new Date().toISOString(),
       }
       orders.push(order)
@@ -636,12 +692,20 @@ export const mockApi = {
         throw new Error('订单已过期，名额已释放')
       }
 
+      let checkinCode = generateCheckinCode()
+      for (let i = 0; i < 5; i++) {
+        if (!orders.some(o => o.checkin_code === checkinCode)) break
+        checkinCode = generateCheckinCode()
+      }
+
       const payment = payments.find(p => p.order_id === body.order_id)
       if (payment) {
         payment.status = 'paid'
         payment.paid_at = new Date().toISOString()
       }
       order.status = 'paid'
+      order.checkin_code = checkinCode
+      order.checkin_status = 'pending'
       return payment ? { ...payment } : {
         id: genId(),
         order_id: body.order_id,
@@ -651,6 +715,59 @@ export const mockApi = {
         status: 'paid',
         paid_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
+      }
+    }
+
+    if (path === '/admin/checkin') {
+      verifyAdmin(headers)
+      const code = body.checkin_code.toUpperCase()
+      const order = orders.find(o => o.checkin_code === code)
+      if (!order) {
+        return { success: false, message: '核销码无效或不存在' }
+      }
+      if (order.status !== 'paid') {
+        if (order.status === 'refunded' || order.status === 'refunding') {
+          return { success: false, message: '该订单已申请退款或已退款' }
+        }
+        return { success: false, message: `订单状态异常：${order.status}` }
+      }
+      const session = sessions.find(s => s.id === order.session_id)
+      if (!session) {
+        return { success: false, message: '关联场次不存在' }
+      }
+      const sessionDate = session.start_time.split('T')[0]
+      const today = new Date().toISOString().split('T')[0]
+      if (sessionDate !== today) {
+        return {
+          success: false,
+          message: `场次日期不匹配，该场次为 ${sessionDate} 的课程`
+        }
+      }
+      if (order.checkin_status === 'checked_in') {
+        return {
+          success: false,
+          message: '该订单已签到，请勿重复签到',
+          order_id: order.id,
+          student_name: order.student_name,
+          checked_in_at: order.checked_in_at,
+        }
+      }
+      order.checkin_status = 'checked_in'
+      order.checked_in_at = new Date().toISOString()
+      const payment = payments.find(p => p.order_id === order.id)
+      return {
+        success: true,
+        message: '签到成功',
+        order_id: order.id,
+        student_name: order.student_name,
+        student_age: order.student_age,
+        parent_name: order.parent_name,
+        parent_phone: order.parent_phone,
+        session_title: session.title,
+        coach: session.coach,
+        start_time: session.start_time,
+        end_time: session.end_time,
+        checked_in_at: order.checked_in_at,
       }
     }
 
