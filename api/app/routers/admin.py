@@ -11,7 +11,9 @@ from app.config import settings
 from app.database import get_db
 from app.models import Order, Session, Payment, Coupon, Refund
 from app.schemas import (
-    OrderOut, SessionOut, CouponOut, CouponCreate, CouponUpdate,
+    OrderOut, SessionOut, SessionCreate, SessionUpdate, SessionSlotsUpdate,
+    SessionStatusUpdate, SessionDetailOut,
+    CouponOut, CouponCreate, CouponUpdate,
     RefundDetailOut, RefundApprove, RefundReject,
 )
 from app.services.refund import approve_refund, reject_refund, RefundError
@@ -96,6 +98,159 @@ async def list_all_sessions(
 ):
     result = await db.execute(select(Session).order_by(Session.start_time))
     return result.scalars().all()
+
+
+@router.post("/sessions", response_model=SessionOut, status_code=201)
+async def admin_create_session(
+    data: SessionCreate,
+    _auth: bool = Depends(verify_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    session = Session(
+        title=data.title,
+        description=data.description,
+        coach=data.coach,
+        start_time=data.start_time,
+        end_time=data.end_time,
+        total_slots=data.total_slots,
+        available_slots=data.total_slots,
+        price=data.price,
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+    return session
+
+
+@router.patch("/sessions/{session_id}", response_model=SessionOut)
+async def admin_update_session(
+    session_id: uuid.UUID,
+    data: SessionUpdate,
+    _auth: bool = Depends(verify_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="场次不存在")
+    if data.title is not None:
+        session.title = data.title
+    if data.description is not None:
+        session.description = data.description
+    if data.coach is not None:
+        session.coach = data.coach
+    if data.start_time is not None:
+        session.start_time = data.start_time
+    if data.end_time is not None:
+        session.end_time = data.end_time
+    if data.price is not None:
+        session.price = data.price
+    await db.commit()
+    await db.refresh(session)
+    return session
+
+
+@router.patch("/sessions/{session_id}/slots", response_model=SessionOut)
+async def admin_update_session_slots(
+    session_id: uuid.UUID,
+    data: SessionSlotsUpdate,
+    _auth: bool = Depends(verify_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import func
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="场次不存在")
+
+    sold_count = await db.execute(
+        select(func.count(Order.id))
+        .where(Order.session_id == session_id, Order.status.in_(["pending", "paid", "refunding"]))
+    )
+    sold = sold_count.scalar() or 0
+
+    if data.total_slots < sold:
+        raise HTTPException(
+            status_code=400,
+            detail=f"总名额不能小于已售数量（{sold}）"
+        )
+
+    delta = data.total_slots - session.total_slots
+    session.total_slots = data.total_slots
+    session.available_slots += delta
+
+    if session.available_slots > 0 and session.status == "full":
+        session.status = "open"
+    elif session.available_slots <= 0 and session.status == "open":
+        session.status = "full"
+
+    await db.commit()
+    await db.refresh(session)
+    return session
+
+
+@router.patch("/sessions/{session_id}/status", response_model=SessionOut)
+async def admin_update_session_status(
+    session_id: uuid.UUID,
+    data: SessionStatusUpdate,
+    _auth: bool = Depends(verify_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="场次不存在")
+    session.status = data.status
+    await db.commit()
+    await db.refresh(session)
+    return session
+
+
+@router.get("/sessions/{session_id}/detail", response_model=SessionDetailOut)
+async def admin_get_session_detail(
+    session_id: uuid.UUID,
+    _auth: bool = Depends(verify_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import func
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="场次不存在")
+
+    booked_result = await db.execute(
+        select(func.count(Order.id))
+        .where(Order.session_id == session_id, Order.status.in_(["pending", "paid", "refunding"]))
+    )
+    booked_count = booked_result.scalar() or 0
+
+    pending_result = await db.execute(
+        select(func.count(Order.id))
+        .where(Order.session_id == session_id, Order.status == "pending")
+    )
+    pending_count = pending_result.scalar() or 0
+
+    paid_result = await db.execute(
+        select(func.coalesce(func.sum(Order.amount), 0))
+        .where(Order.session_id == session_id, Order.status == "paid")
+    )
+    paid_amount = paid_result.scalar() or 0
+
+    return SessionDetailOut(
+        id=session.id,
+        title=session.title,
+        description=session.description,
+        coach=session.coach,
+        start_time=session.start_time,
+        end_time=session.end_time,
+        total_slots=session.total_slots,
+        available_slots=session.available_slots,
+        price=session.price,
+        status=session.status,
+        booked_count=booked_count,
+        pending_count=pending_count,
+        paid_amount=paid_amount,
+    )
 
 
 @router.get("/stats")

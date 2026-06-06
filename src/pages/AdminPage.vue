@@ -190,6 +190,214 @@
         </div>
       </div>
 
+      <!-- 场次管理 -->
+      <div v-show="activeTab === 'sessions'" class="space-y-4">
+        <div class="flex gap-3 items-center flex-wrap">
+          <button @click="openCreateSession"
+            class="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-600 transition text-sm font-medium">
+            ＋ 新建场次
+          </button>
+          <button @click="loadSessions" class="px-4 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 transition text-sm">🔄 刷新</button>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-sky-100 overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-sky-50 text-sky-800">
+              <tr>
+                <th class="px-4 py-3 text-left">场次</th>
+                <th class="px-4 py-3 text-left">教练</th>
+                <th class="px-4 py-3 text-left">时间</th>
+                <th class="px-4 py-3 text-left">价格</th>
+                <th class="px-4 py-3 text-left">名额</th>
+                <th class="px-4 py-3 text-left">状态</th>
+                <th class="px-4 py-3 text-left">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="s in sessions" :key="s.id" class="border-t border-gray-50 hover:bg-gray-50">
+                <td class="px-4 py-3">
+                  <div class="font-medium text-sky-900">{{ s.title }}</div>
+                  <div v-if="s.description" class="text-xs text-gray-400 mt-0.5 max-w-xs truncate">{{ s.description }}</div>
+                </td>
+                <td class="px-4 py-3">{{ s.coach }}</td>
+                <td class="px-4 py-3 text-gray-600 text-xs">
+                  <div>{{ new Date(s.start_time).toLocaleString('zh-CN') }}</div>
+                  <div class="text-gray-400">至 {{ new Date(s.end_time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }}</div>
+                </td>
+                <td class="px-4 py-3 font-medium text-orange-500">¥{{ (s.price / 100).toFixed(2) }}</td>
+                <td class="px-4 py-3">
+                  <span :class="s.available_slots <= 3 ? 'text-red-500' : 'text-green-600'" class="font-bold">{{ s.available_slots }}</span>
+                  <span class="text-gray-400"> / {{ s.total_slots }}</span>
+                </td>
+                <td class="px-4 py-3">
+                  <span :class="sessionStatusClass(s.status)" class="px-2 py-0.5 rounded-full text-xs font-medium">
+                    {{ sessionStatusLabel(s.status) }}
+                  </span>
+                </td>
+                <td class="px-4 py-3">
+                  <div class="flex gap-2 flex-wrap">
+                    <button @click="openSessionDetail(s)" class="text-sky-600 hover:text-sky-800 text-xs font-medium">详情</button>
+                    <button @click="openEditSession(s)" class="text-sky-600 hover:text-sky-800 text-xs font-medium">编辑</button>
+                    <button @click="openSlotsEditor(s)" class="text-amber-600 hover:text-amber-800 text-xs font-medium">名额</button>
+                    <button @click="toggleSessionStatus(s)" :disabled="processingSession === s.id"
+                      class="text-xs font-medium disabled:opacity-50"
+                      :class="s.status === 'open' ? 'text-red-600 hover:text-red-800' : 'text-green-600 hover:text-green-800'">
+                      {{ s.status === 'open' ? '关闭' : '开启' }}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="sessions.length === 0" class="text-center py-8 text-gray-400">暂无场次</div>
+        </div>
+
+        <!-- 新建/编辑场次弹窗 -->
+        <div v-if="showSessionForm" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+              <h3 class="text-lg font-bold text-sky-900">{{ editingSession ? '编辑场次' : '新建场次' }}</h3>
+              <button @click="showSessionForm = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+            </div>
+            <div class="p-6 space-y-4">
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">场次标题 *</label>
+                <input v-model="sessionForm.title" placeholder="如 亲子游泳启蒙班" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">描述</label>
+                <textarea v-model="sessionForm.description" placeholder="可包含适合年龄等信息，如「适合 1-3 岁宝宝」" rows="3" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">教练 *</label>
+                <input v-model="sessionForm.coach" placeholder="如 李教练" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">开始时间 *</label>
+                  <input v-model="sessionForm.start_time" type="datetime-local" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">结束时间 *</label>
+                  <input v-model="sessionForm.end_time" type="datetime-local" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">总名额</label>
+                  <input v-model.number="sessionForm.total_slots" type="number" min="1" :disabled="!!editingSession" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300 disabled:bg-gray-50 disabled:text-gray-400" />
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">价格（元）</label>
+                  <input v-model.number="sessionForm.price" type="number" min="1" step="0.01" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+                </div>
+              </div>
+              <p v-if="sessionError" class="text-red-500 text-sm">{{ sessionError }}</p>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
+              <button @click="showSessionForm = false" class="px-4 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 text-sm">取消</button>
+              <button @click="saveSession" :disabled="creatingSession"
+                class="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-600 disabled:bg-gray-300 text-sm font-medium">
+                {{ creatingSession ? '保存中...' : '保存' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 调整名额弹窗 -->
+        <div v-if="editingSlots" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div class="bg-white rounded-2xl shadow-xl max-w-sm w-full">
+            <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+              <h3 class="text-lg font-bold text-sky-900">调整总名额</h3>
+              <button @click="editingSlots = null" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+            </div>
+            <div class="p-6 space-y-4">
+              <div class="text-sm text-gray-600">
+                <p>场次：<span class="font-medium text-sky-900">{{ editingSlots.title }}</span></p>
+                <p class="mt-1">当前名额：<span class="font-medium">{{ editingSlots.total_slots }}</span></p>
+                <p class="mt-1">已售（含待支付）：<span class="font-medium text-red-500">{{ editingSlots.total_slots - editingSlots.available_slots }}</span></p>
+                <p class="mt-2 text-xs text-gray-400">注意：总名额不能小于已售数量</p>
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">新总名额</label>
+                <input v-model.number="newSlotCount" type="number" :min="editingSlots.total_slots - editingSlots.available_slots" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-300" />
+              </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
+              <button @click="editingSlots = null" class="px-4 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 text-sm">取消</button>
+              <button @click="saveSlots" :disabled="processingSession === editingSlots.id"
+                class="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-600 disabled:bg-gray-300 text-sm font-medium">
+                {{ processingSession === editingSlots.id ? '保存中...' : '确认调整' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 场次详情弹窗 -->
+        <div v-if="showSessionDetail && sessionDetail" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full">
+            <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+              <h3 class="text-lg font-bold text-sky-900">场次详情</h3>
+              <button @click="closeSessionDetail" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+            </div>
+            <div class="p-6 space-y-4">
+              <div>
+                <h4 class="font-bold text-sky-900">{{ sessionDetail.title }}</h4>
+                <p v-if="sessionDetail.description" class="text-sm text-gray-500 mt-1">{{ sessionDetail.description }}</p>
+              </div>
+              <div class="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <div class="text-gray-400 text-xs">教练</div>
+                  <div class="font-medium">{{ sessionDetail.coach }}</div>
+                </div>
+                <div>
+                  <div class="text-gray-400 text-xs">状态</div>
+                  <span :class="sessionStatusClass(sessionDetail.status)" class="px-2 py-0.5 rounded-full text-xs font-medium">
+                    {{ sessionStatusLabel(sessionDetail.status) }}
+                  </span>
+                </div>
+                <div>
+                  <div class="text-gray-400 text-xs">开始时间</div>
+                  <div class="font-medium">{{ new Date(sessionDetail.start_time).toLocaleString('zh-CN') }}</div>
+                </div>
+                <div>
+                  <div class="text-gray-400 text-xs">结束时间</div>
+                  <div class="font-medium">{{ new Date(sessionDetail.end_time).toLocaleString('zh-CN') }}</div>
+                </div>
+                <div>
+                  <div class="text-gray-400 text-xs">总名额</div>
+                  <div class="font-medium">{{ sessionDetail.total_slots }}</div>
+                </div>
+                <div>
+                  <div class="text-gray-400 text-xs">剩余名额</div>
+                  <div class="font-medium" :class="sessionDetail.available_slots <= 3 ? 'text-red-500' : 'text-green-600'">{{ sessionDetail.available_slots }}</div>
+                </div>
+              </div>
+              <div class="pt-4 border-t border-gray-100">
+                <h5 class="font-bold text-gray-700 mb-3">报名统计</h5>
+                <div class="grid grid-cols-3 gap-4 text-center">
+                  <div class="bg-sky-50 rounded-xl p-3">
+                    <div class="text-2xl font-bold text-sky-600">{{ sessionDetail.booked_count }}</div>
+                    <div class="text-xs text-gray-500 mt-1">已报人数</div>
+                  </div>
+                  <div class="bg-yellow-50 rounded-xl p-3">
+                    <div class="text-2xl font-bold text-yellow-600">{{ sessionDetail.pending_count }}</div>
+                    <div class="text-xs text-gray-500 mt-1">待支付占用</div>
+                  </div>
+                  <div class="bg-green-50 rounded-xl p-3">
+                    <div class="text-2xl font-bold text-green-600">¥{{ (sessionDetail.paid_amount / 100).toFixed(0) }}</div>
+                    <div class="text-xs text-gray-500 mt-1">实收金额</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-100 flex justify-end">
+              <button @click="closeSessionDetail" class="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-600 text-sm font-medium">关闭</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 退款 -->
       <div v-show="activeTab === 'refunds'" class="space-y-4">
         <div class="flex gap-3 items-center">
@@ -254,10 +462,11 @@ const authenticated = ref(false)
 const loginError = ref('')
 const filterStatus = ref('')
 const exporting = ref(false)
-const activeTab = ref<'orders' | 'coupons' | 'refunds'>('orders')
+const activeTab = ref<'orders' | 'sessions' | 'coupons' | 'refunds'>('orders')
 
 const tabs = [
   { key: 'orders' as const, label: '订单' },
+  { key: 'sessions' as const, label: '场次管理' },
   { key: 'coupons' as const, label: '优惠券' },
   { key: 'refunds' as const, label: '退款审批' },
 ]
@@ -307,15 +516,55 @@ interface RefundRow {
   session_title: string
 }
 
+interface SessionRow {
+  id: string
+  title: string
+  description: string | null
+  coach: string
+  start_time: string
+  end_time: string
+  total_slots: number
+  available_slots: number
+  price: number
+  status: string
+}
+
+interface SessionDetailRow extends SessionRow {
+  booked_count: number
+  pending_count: number
+  paid_amount: number
+}
+
 const orders = ref<OrderRow[]>([])
 const coupons = ref<CouponRow[]>([])
 const refunds = ref<RefundRow[]>([])
+const sessions = ref<SessionRow[]>([])
+const sessionDetail = ref<SessionDetailRow | null>(null)
 
 const showCouponForm = ref(false)
 const creatingCoupon = ref(false)
 const couponError = ref('')
 const refundFilter = ref('')
 const processingRefund = ref<string | null>(null)
+
+const showSessionForm = ref(false)
+const showSessionDetail = ref(false)
+const editingSession = ref<SessionRow | null>(null)
+const creatingSession = ref(false)
+const sessionError = ref('')
+const processingSession = ref<string | null>(null)
+const editingSlots = ref<SessionRow | null>(null)
+const newSlotCount = ref(0)
+
+const sessionForm = reactive({
+  title: '',
+  description: '',
+  coach: '',
+  start_time: '',
+  end_time: '',
+  total_slots: 10,
+  price: 199,
+})
 
 const couponForm = reactive({
   code: '',
@@ -385,8 +634,9 @@ async function login() {
   }
 }
 
-function switchTab(key: 'orders' | 'coupons' | 'refunds') {
+function switchTab(key: 'orders' | 'sessions' | 'coupons' | 'refunds') {
   activeTab.value = key
+  if (key === 'sessions' && sessions.value.length === 0) loadSessions()
   if (key === 'coupons' && coupons.value.length === 0) loadCoupons()
   if (key === 'refunds') loadRefunds()
 }
@@ -480,6 +730,135 @@ async function rejectRefund(r: RefundRow) {
   } finally {
     processingRefund.value = null
   }
+}
+
+function sessionStatusLabel(s: string) {
+  const m: Record<string, string> = { open: '可报名', closed: '已关闭', full: '已满' }
+  return m[s] || s
+}
+
+function sessionStatusClass(s: string) {
+  const m: Record<string, string> = {
+    open: 'bg-green-100 text-green-700',
+    closed: 'bg-gray-100 text-gray-500',
+    full: 'bg-red-100 text-red-700'
+  }
+  return m[s] || 'bg-gray-100 text-gray-600'
+}
+
+async function loadSessions() {
+  try {
+    sessions.value = await get<SessionRow[]>('/admin/sessions', authHeader())
+  } catch {}
+}
+
+function openCreateSession() {
+  editingSession.value = null
+  sessionForm.title = ''
+  sessionForm.description = ''
+  sessionForm.coach = ''
+  sessionForm.start_time = ''
+  sessionForm.end_time = ''
+  sessionForm.total_slots = 10
+  sessionForm.price = 199
+  showSessionForm.value = true
+  sessionError.value = ''
+}
+
+function openEditSession(s: SessionRow) {
+  editingSession.value = s
+  sessionForm.title = s.title
+  sessionForm.description = s.description || ''
+  sessionForm.coach = s.coach
+  sessionForm.start_time = s.start_time.slice(0, 16)
+  sessionForm.end_time = s.end_time.slice(0, 16)
+  sessionForm.total_slots = s.total_slots
+  sessionForm.price = s.price / 100
+  showSessionForm.value = true
+  sessionError.value = ''
+}
+
+async function saveSession() {
+  sessionError.value = ''
+  if (!sessionForm.title || !sessionForm.coach) { sessionError.value = '请填写标题与教练'; return }
+  if (!sessionForm.start_time || !sessionForm.end_time) { sessionError.value = '请选择时间'; return }
+  if (new Date(sessionForm.end_time) <= new Date(sessionForm.start_time)) { sessionError.value = '结束时间必须晚于开始时间'; return }
+
+  creatingSession.value = true
+  try {
+    const payload = {
+      title: sessionForm.title.trim(),
+      description: sessionForm.description.trim() || null,
+      coach: sessionForm.coach.trim(),
+      start_time: new Date(sessionForm.start_time).toISOString(),
+      end_time: new Date(sessionForm.end_time).toISOString(),
+      total_slots: sessionForm.total_slots,
+      price: Math.round(sessionForm.price * 100),
+    }
+    if (editingSession.value) {
+      const { total_slots, ...updatePayload } = payload
+      await patch(`/admin/sessions/${editingSession.value.id}`, updatePayload, authHeader())
+    } else {
+      await post('/admin/sessions', payload, authHeader())
+    }
+    showSessionForm.value = false
+    await loadSessions()
+  } catch (e: any) {
+    sessionError.value = e.message || '保存失败'
+  } finally {
+    creatingSession.value = false
+  }
+}
+
+async function toggleSessionStatus(s: SessionRow) {
+  const next = s.status === 'open' ? 'closed' : 'open'
+  processingSession.value = s.id
+  try {
+    await patch(`/admin/sessions/${s.id}/status`, { status: next }, authHeader())
+    s.status = next
+  } catch (e: any) {
+    alert(e.message || '操作失败')
+  } finally {
+    processingSession.value = null
+  }
+}
+
+function openSlotsEditor(s: SessionRow) {
+  editingSlots.value = s
+  newSlotCount.value = s.total_slots
+}
+
+async function saveSlots() {
+  if (!editingSlots.value) return
+  processingSession.value = editingSlots.value.id
+  try {
+    const updated = await patch<SessionRow>(
+      `/admin/sessions/${editingSlots.value.id}/slots`,
+      { total_slots: newSlotCount.value },
+      authHeader()
+    )
+    const idx = sessions.value.findIndex(s => s.id === updated.id)
+    if (idx !== -1) sessions.value[idx] = updated
+    editingSlots.value = null
+  } catch (e: any) {
+    alert(e.message || '调整失败')
+  } finally {
+    processingSession.value = null
+  }
+}
+
+async function openSessionDetail(s: SessionRow) {
+  try {
+    sessionDetail.value = await get<SessionDetailRow>(`/admin/sessions/${s.id}/detail`, authHeader())
+    showSessionDetail.value = true
+  } catch (e: any) {
+    alert(e.message || '获取详情失败')
+  }
+}
+
+function closeSessionDetail() {
+  showSessionDetail.value = false
+  sessionDetail.value = null
 }
 
 async function exportCsv() {

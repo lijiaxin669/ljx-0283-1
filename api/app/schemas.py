@@ -29,6 +29,41 @@ class SessionCreate(BaseModel):
     price: int = Field(..., gt=0)
 
 
+class SessionUpdate(BaseModel):
+    title: str | None = Field(None, max_length=200)
+    description: str | None = None
+    coach: str | None = Field(None, max_length=100)
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    price: int | None = Field(None, gt=0)
+
+
+class SessionSlotsUpdate(BaseModel):
+    total_slots: int = Field(..., gt=0)
+
+
+class SessionStatusUpdate(BaseModel):
+    status: str = Field(..., pattern="^(open|closed|full)$")
+
+
+class SessionDetailOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    description: str | None
+    coach: str
+    start_time: datetime
+    end_time: datetime
+    total_slots: int
+    available_slots: int
+    price: int
+    status: str
+    booked_count: int
+    pending_count: int
+    paid_amount: int
+
+    model_config = {"from_attributes": True}
+
+
 class OrderCreate(BaseModel):
     session_id: uuid.UUID
     student_name: str = Field(..., max_length=100)
