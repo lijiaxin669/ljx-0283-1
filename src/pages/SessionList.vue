@@ -207,6 +207,9 @@ function selectSession(s: Session) {
 async function loadSessions() {
   try {
     const params = new URLSearchParams()
+    if (filterDate.value) params.append('date_filter', filterDate.value)
+    if (filterCoach.value) params.append('coach', filterCoach.value)
+    if (filterStatus.value) params.append('status', filterStatus.value)
     if (sortBy.value) params.append('sort_by', sortBy.value)
     if (sortOrder.value) params.append('sort_order', sortOrder.value)
 

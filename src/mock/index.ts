@@ -80,7 +80,7 @@ const sessions: MockSession[] = [
   {
     id: 'a0000000-0000-0000-0000-000000000001',
     title: '亲子启蒙班 A',
-    description: '适合 1-3 岁宝宝，家长陪同入水',
+    description: '适合 1–3 岁宝宝，家长陪同入水',
     coach: '王教练',
     start_time: '2026-07-01T09:00:00',
     end_time: '2026-07-01T10:00:00',
@@ -92,7 +92,7 @@ const sessions: MockSession[] = [
   {
     id: 'a0000000-0000-0000-0000-000000000002',
     title: '亲子启蒙班 B',
-    description: '适合 1-3 岁宝宝，家长陪同入水',
+    description: '适合 1–3 岁宝宝，家长陪同入水',
     coach: '李教练',
     start_time: '2026-07-01T10:30:00',
     end_time: '2026-07-01T11:30:00',
@@ -104,7 +104,7 @@ const sessions: MockSession[] = [
   {
     id: 'a0000000-0000-0000-0000-000000000003',
     title: '幼儿基础班',
-    description: '适合 3-6 岁儿童，学习基础泳姿',
+    description: '适合 3–6 岁儿童，学习基础泳姿',
     coach: '张教练',
     start_time: '2026-07-02T09:00:00',
     end_time: '2026-07-02T10:30:00',
@@ -116,7 +116,7 @@ const sessions: MockSession[] = [
   {
     id: 'a0000000-0000-0000-0000-000000000004',
     title: '少儿进阶班',
-    description: '适合 6-12 岁少儿，提升游泳技巧',
+    description: '适合 6–12 岁少儿，提升游泳技巧',
     coach: '赵教练',
     start_time: '2026-07-03T14:00:00',
     end_time: '2026-07-03T16:00:00',
@@ -237,8 +237,48 @@ export const mockApi = {
     await delay(80)
     checkExpiry()
 
-    if (path === '/sessions') {
-      return sessions.map(s => ({ ...s }))
+    const sessionsListMatch = path.match(/^\/sessions(\?.*)?$/)
+    if (sessionsListMatch) {
+      const urlObj = new URL(path, 'http://localhost')
+      const dateFilter = urlObj.searchParams.get('date_filter')
+      const coachFilter = urlObj.searchParams.get('coach')
+      const statusFilter = urlObj.searchParams.get('status')
+      const sortBy = urlObj.searchParams.get('sort_by')
+      const sortOrder = urlObj.searchParams.get('sort_order') || 'asc'
+
+      let result = sessions.map(s => ({ ...s }))
+
+      if (dateFilter) {
+        result = result.filter(s => s.start_time.startsWith(dateFilter))
+      }
+      if (coachFilter) {
+        result = result.filter(s => s.coach === coachFilter)
+      }
+      if (statusFilter) {
+        result = result.filter(s => s.status === statusFilter)
+      }
+
+      result.sort((a, b) => {
+        let aVal: string | number = a.start_time
+        let bVal: string | number = b.start_time
+        if (sortBy === 'price') {
+          aVal = a.price
+          bVal = b.price
+        } else if (sortBy === 'available_slots') {
+          aVal = a.available_slots
+          bVal = b.available_slots
+        }
+        if (typeof aVal === 'string' && typeof bVal === 'string') {
+          return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal)
+        }
+        return sortOrder === 'asc' ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number)
+      })
+
+      return result
+    }
+
+    if (path === '/sessions/coaches') {
+      return [...new Set(sessions.map(s => s.coach))].sort()
     }
 
     const sessionMatch = path.match(/^\/sessions\/([a-f0-9-]+)$/)
@@ -285,6 +325,27 @@ export const mockApi = {
       let result = orders.map(o => ({ ...o }))
       if (status) result = result.filter(o => o.status === status)
       return result.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    }
+
+    if (path === '/admin/sessions') {
+      verifyAdmin(headers)
+      return sessions.map(s => ({ ...s })).sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+    }
+
+    const adminSessionDetailMatch = path.match(/^\/admin\/sessions\/([a-f0-9-]+)\/detail$/)
+    if (adminSessionDetailMatch) {
+      verifyAdmin(headers)
+      const s = sessions.find(s => s.id === adminSessionDetailMatch[1])
+      if (!s) throw new Error('场次不存在')
+      const bookedCount = orders.filter(o => o.session_id === s.id && ['pending', 'paid', 'refunding'].includes(o.status)).length
+      const pendingCount = orders.filter(o => o.session_id === s.id && o.status === 'pending').length
+      const paidAmount = orders.filter(o => o.session_id === s.id && o.status === 'paid').reduce((sum, o) => sum + o.amount, 0)
+      return {
+        ...s,
+        booked_count: bookedCount,
+        pending_count: pendingCount,
+        paid_amount: paidAmount,
+      }
     }
 
     const voucherMatch = path.match(/^\/orders\/([a-f0-9-]+)\/voucher$/)
@@ -448,6 +509,24 @@ export const mockApi = {
       return { ...refund }
     }
 
+    if (path === '/admin/sessions') {
+      verifyAdmin(headers)
+      const s: MockSession = {
+        id: genId(),
+        title: body.title,
+        description: body.description || null,
+        coach: body.coach,
+        start_time: body.start_time,
+        end_time: body.end_time,
+        total_slots: body.total_slots,
+        available_slots: body.total_slots,
+        price: body.price,
+        status: 'open',
+      }
+      sessions.push(s)
+      return { ...s }
+    }
+
     if (path === '/admin/coupons') {
       verifyAdmin(headers)
       if (coupons.some(c => c.code === body.code)) throw new Error('优惠码已存在')
@@ -580,6 +659,47 @@ export const mockApi = {
 
   async patch(path: string, body?: any, headers?: Record<string, string>): Promise<any> {
     await delay(100)
+
+    const sessionSlotsMatch = path.match(/^\/admin\/sessions\/([a-f0-9-]+)\/slots$/)
+    if (sessionSlotsMatch) {
+      verifyAdmin(headers)
+      const s = sessions.find(s => s.id === sessionSlotsMatch[1])
+      if (!s) throw new Error('场次不存在')
+      const sold = s.total_slots - s.available_slots
+      if (body.total_slots < sold) {
+        throw new Error(`总名额不能小于已售数量（${sold}）`)
+      }
+      const delta = body.total_slots - s.total_slots
+      s.total_slots = body.total_slots
+      s.available_slots += delta
+      if (s.available_slots > 0 && s.status === 'full') s.status = 'open'
+      if (s.available_slots <= 0 && s.status === 'open') s.status = 'full'
+      return { ...s }
+    }
+
+    const sessionStatusMatch = path.match(/^\/admin\/sessions\/([a-f0-9-]+)\/status$/)
+    if (sessionStatusMatch) {
+      verifyAdmin(headers)
+      const s = sessions.find(s => s.id === sessionStatusMatch[1])
+      if (!s) throw new Error('场次不存在')
+      s.status = body.status
+      return { ...s }
+    }
+
+    const sessionUpdateMatch = path.match(/^\/admin\/sessions\/([a-f0-9-]+)$/)
+    if (sessionUpdateMatch) {
+      verifyAdmin(headers)
+      const s = sessions.find(s => s.id === sessionUpdateMatch[1])
+      if (!s) throw new Error('场次不存在')
+      if (body.title !== undefined) s.title = body.title
+      if (body.description !== undefined) s.description = body.description
+      if (body.coach !== undefined) s.coach = body.coach
+      if (body.start_time !== undefined) s.start_time = body.start_time
+      if (body.end_time !== undefined) s.end_time = body.end_time
+      if (body.price !== undefined) s.price = body.price
+      return { ...s }
+    }
+
     const couponMatch = path.match(/^\/admin\/coupons\/([a-f0-9-]+)$/)
     if (couponMatch) {
       verifyAdmin(headers)

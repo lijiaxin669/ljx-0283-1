@@ -765,17 +765,27 @@ function openCreateSession() {
   sessionError.value = ''
 }
 
+function formatForDatetimeLocal(iso: string): string {
+  return iso.slice(0, 16)
+}
+
 function openEditSession(s: SessionRow) {
   editingSession.value = s
   sessionForm.title = s.title
   sessionForm.description = s.description || ''
   sessionForm.coach = s.coach
-  sessionForm.start_time = s.start_time.slice(0, 16)
-  sessionForm.end_time = s.end_time.slice(0, 16)
+  sessionForm.start_time = formatForDatetimeLocal(s.start_time)
+  sessionForm.end_time = formatForDatetimeLocal(s.end_time)
   sessionForm.total_slots = s.total_slots
   sessionForm.price = s.price / 100
   showSessionForm.value = true
   sessionError.value = ''
+}
+
+function toLocalISOString(datetimeLocal: string): string {
+  if (!datetimeLocal) return ''
+  const [datePart, timePart] = datetimeLocal.split('T')
+  return `${datePart}T${timePart}:00`
 }
 
 async function saveSession() {
@@ -786,12 +796,13 @@ async function saveSession() {
 
   creatingSession.value = true
   try {
+    const desc = sessionForm.description.trim()
     const payload = {
       title: sessionForm.title.trim(),
-      description: sessionForm.description.trim() || null,
+      description: desc || null,
       coach: sessionForm.coach.trim(),
-      start_time: new Date(sessionForm.start_time).toISOString(),
-      end_time: new Date(sessionForm.end_time).toISOString(),
+      start_time: toLocalISOString(sessionForm.start_time),
+      end_time: toLocalISOString(sessionForm.end_time),
       total_slots: sessionForm.total_slots,
       price: Math.round(sessionForm.price * 100),
     }
